@@ -51,7 +51,7 @@ function Loading(){return <div className="loading-page"><LoaderCircle className=
 
 function Page({active,profile,notify}:{active:string;profile:Profile;notify:(s:string)=>void}){
   if(active==="Dashboard")return <Dashboard/>; if(configs[active])return <CrudPage config={configs[active]} profile={profile} notify={notify}/>;
-  if(active==="Consultation")return <Consultation profile={profile} notify={notify}/>; if(active==="Patient History")return <PatientHistory profile={profile} notify={notify}/>;
+  if(active==="Consultation")return <Consultation profile={profile} notify={notify}/>; if(active==="Patient History")return <PatientHistorySimple profile={profile} notify={notify}/>;
   if(active==="Billing")return <Billing profile={profile} notify={notify}/>; if(active==="Sales")return <Sales/>;
   if(active==="Inventory")return <Inventory mode="all"/>; if(active==="Low Stock")return <Inventory mode="low"/>; if(active==="Expiry Alerts")return <Inventory mode="expiry"/>;
   if(active==="New Purchase")return <Purchase profile={profile} notify={notify}/>; if(active==="Purchase History")return <Purchases/>;
@@ -93,7 +93,67 @@ function SimpleForm({title,subtitle,onSubmit,children}:{title:string;subtitle:st
 function UsersPage({profile}:{profile:Profile}){const x=useRows("profiles","full_name,role,mobile,active,created_at");return <List title="Users & Roles" subtitle={profile.role==="admin"?"Organization users and permissions":"Admin access is required for changes"} state={x} cols={[["full_name","Name"],["role","Role"],["mobile","Mobile"],["active","Active"],["created_at","Created"]]}/>}
 function ReportPage({title}:{title:string}){const maps:Record<string,[string,Array<[string,string]>]>={Reports:["sales",[["invoice_no","Invoice"],["sold_at","Date"],["pharmacy_revenue","Pharmacy revenue"],["doctor_fee","Consultation revenue"],["grand_total","Collection"]]],Settings:["organizations",[["clinic_name","Clinic"],["pharmacy_name","Pharmacy"],["phone","Phone"],["gst_number","GST"],["currency","Currency"]]]};const m=maps[title]||["notifications",[["created_at","Date"],["kind","Type"],["title","Notification"],["read_at","Read"]]];const x=useRows(m[0] as string,"*");return <List title={title} subtitle="Live Supabase records" state={x} cols={m[1] as Array<[string,string]>}/>}
 
-function Field({name,label,type="text",required,textarea,defaultValue}:{name:string;label:string;type?:string;required?:boolean;textarea?:boolean;defaultValue?:string|number|null}){return <label className="field"><span>{label}{required&&<b> *</b>}</span>{textarea?<textarea name={name} required={required} defaultValue={defaultValue??""}/>:<input name={name} type={type} required={required} defaultValue={defaultValue??""} step={type==="number"?"0.01":undefined}/>}</label>}
+function Field({name,label,type="text",required,textarea,defaultValue}:{name:string;label:string;type?:string;required?:boolean;textarea?:boolean;defaultValue?:string|number|null}){const isRequired=required&&name!=="symptoms";return <label className="field"><span>{label}{isRequired&&<b> *</b>}</span>{textarea?<textarea name={name} required={isRequired} defaultValue={defaultValue??""}/>:<input name={name} type={type} required={isRequired} defaultValue={defaultValue??""} step={type==="number"?"0.01":undefined}/>}</label>}
 function SelectField({name,label,rows,text,value,onChange,empty}:{name:string;label:string;rows:Row[];text:(r:Row)=>string;value?:string;onChange?:(s:string)=>void;empty?:string}){return <label className="field"><span>{label}</span><select name={name} value={value} onChange={onChange?e=>onChange(e.target.value):undefined} required={!empty}>{empty&&<option value="">{empty}</option>}{!empty&&<option value="">Select…</option>}{rows.map(r=><option key={r.id} value={r.id}>{text(r)}</option>)}</select></label>}
+
+function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string)=>void}){
+  const {rows:patients}=useRows("patients","id,patient_id,name,mobile");
+  const {rows:doctors}=useRows("doctors","id,name");
+  const [id,setId]=useState("");
+  const [refresh,setRefresh]=useState(0);
+  const [saving,setSaving]=useState(false);
+  const [history,setHistory]=useState<Row[]>([]);
+  const [urls,setUrls]=useState<Record<string,string>>({});
+  const [loading,setLoading]=useState(false);
+
+  useEffect(()=>{
+    if(!id||!supabase){setHistory([]);setUrls({});return}
+    setLoading(true);
+    supabase.from("consultations").select("*,doctor:doctors(name),prescription_attachments(id,storage_path,file_name,content_type)").eq("patient_id",id).order("visited_at",{ascending:false}).then(async({data})=>{
+      const records=data||[];
+      setHistory(records);
+      const attachments=records.flatMap(r=>r.prescription_attachments||[]);
+      const pairs=await Promise.all(attachments.map(async(a:Row)=>{
+        const {data:signed}=await supabase!.storage.from("prescriptions").createSignedUrl(a.storage_path,3600);
+        return [a.id,signed?.signedUrl||""];
+      }));
+      setUrls(Object.fromEntries(pairs));
+      setLoading(false);
+    });
+  },[id,refresh]);
+
+  const save=async(e:FormEvent<HTMLFormElement>)=>{
+    e.preventDefault();
+    if(!id||!doctors.length)return;
+    const form=e.currentTarget;
+    const values=new FormData(form);
+    const files=Array.from((form.elements.namedItem("history_files") as HTMLInputElement)?.files||[]);
+    setSaving(true);
+    const {data,error}=await supabase!.from("consultations").insert({
+      organization_id:profile.organization_id,
+      patient_id:id,
+      doctor_id:doctors[0].id,
+      doctor_fee:Number(values.get("doctor_fee")||0),
+      created_by:profile.id
+    }).select("id").single();
+    if(error){setSaving(false);notify(error.message);return}
+    let uploaded=0;
+    for(const file of files){
+      const safe=file.name.replace(/[^a-zA-Z0-9._-]/g,"-");
+      const path=`${profile.organization_id}/${id}/${data.id}/${Date.now()}-${safe}`;
+      const {error:uploadError}=await supabase!.storage.from("prescriptions").upload(path,file,{contentType:file.type,upsert:false});
+      if(uploadError){notify(`Fee saved, but ${file.name} failed: ${uploadError.message}`);continue}
+      const {error:metaError}=await supabase!.from("prescription_attachments").insert({organization_id:profile.organization_id,patient_id:id,consultation_id:data.id,storage_path:path,file_name:file.name,content_type:file.type,size_bytes:file.size,uploaded_by:profile.id});
+      if(!metaError)uploaded++;
+    }
+    await supabase!.from("patients").update({last_visit_at:new Date().toISOString()}).eq("id",id);
+    setSaving(false);
+    notify(`Doctor fee and ${uploaded} prescription image${uploaded===1?"":"s"} saved`);
+    form.reset();
+    setRefresh(v=>v+1);
+  };
+
+  return <><PageHead title="Patient History" subtitle="Add doctor fee and prescription images"/><div className="panel history-entry"><SelectField name="patient" label="Select patient" rows={patients} value={id} onChange={setId} text={r=>`${r.patient_id} — ${r.name}${r.mobile?` — ${r.mobile}`:""}`}/>{id&&(!doctors.length?<Empty text="Add at least one doctor before saving patient history."/>:<form onSubmit={save}><Field name="doctor_fee" label="Doctor fee" type="number" required/><label className="prescription-upload"><Camera size={23}/><strong>Take prescription photo or attach images</strong><span>Camera, JPG, PNG or WEBP · multiple images allowed</span><input name="history_files" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple required/></label><div className="form-actions"><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Add to patient history</button></div></form>)}</div><div className="panel history-list"><h2>Complete patient history</h2>{loading?<LoadingPanel/>:history.length?<div className="timeline">{history.map(r=><div className="timeline-item" key={r.id}><span>{fmtDate(r.visited_at)}</span><div><h3>{r.doctor?.name||"Doctor"} · Doctor fee {money(r.doctor_fee)}</h3>{r.symptoms&&<p><b>Symptoms:</b> {r.symptoms}</p>}{r.diagnosis&&<p><b>Diagnosis:</b> {r.diagnosis}</p>}{r.clinical_notes&&<p><b>Clinical notes:</b> {r.clinical_notes}</p>}{r.prescription_notes&&<p><b>Prescription:</b> {r.prescription_notes}</p>}{r.prescription_attachments?.length>0&&<div className="prescription-gallery full-images">{r.prescription_attachments.map((a:Row)=>a.content_type?.startsWith("image/")?<div className="prescription-image-full" key={a.id}><img src={urls[a.id]} alt={a.file_name}/><span>{a.file_name}</span></div>:<a className="prescription-file" key={a.id} href={urls[a.id]} target="_blank" rel="noreferrer"><Paperclip/><span>{a.file_name}</span></a>)}</div>}</div></div>)}</div>:<Empty text={id?"No history found. Add the first fee and image above.":"Select a patient to view history."}/>}</div></>;
+}
 function Modal({title,subtitle,onClose,children}:{title:string;subtitle:string;onClose:()=>void;children:React.ReactNode}){return <div className="modal-wrap"><div className="modal"><div className="modal-head"><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-btn" onClick={onClose}><X size={19}/></button></div>{children}</div></div>}
 function LoadingPanel(){return <div className="loading-panel"><LoaderCircle className="spin"/> Loading database records…</div>}
