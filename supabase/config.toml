@@ -1,0 +1,12 @@
+project_id = "sivacare-clinic"
+
+[api]
+enabled = true
+schemas = ["public", "storage", "graphql_public"]
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+
+[storage]
+enabled = true
