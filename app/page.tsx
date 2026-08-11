@@ -100,6 +100,7 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
   const {rows:patients}=useRows("patients","id,patient_id,name,mobile");
   const {rows:doctors}=useRows("doctors","id,name");
   const [id,setId]=useState("");
+  const [patientSearch,setPatientSearch]=useState("");
   const [refresh,setRefresh]=useState(0);
   const [saving,setSaving]=useState(false);
   const [history,setHistory]=useState<Row[]>([]);
@@ -134,6 +135,7 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
       patient_id:id,
       doctor_id:doctors[0].id,
       doctor_fee:Number(values.get("doctor_fee")||0),
+      follow_up_date:values.get("follow_up_date")||null,
       created_by:profile.id
     }).select("id").single();
     if(error){setSaving(false);notify(error.message);return}
@@ -153,7 +155,26 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
     setRefresh(v=>v+1);
   };
 
-  return <><PageHead title="Patient History" subtitle="Add doctor fee and prescription images"/><div className="panel history-entry"><SelectField name="patient" label="Select patient" rows={patients} value={id} onChange={setId} text={r=>`${r.patient_id} — ${r.name}${r.mobile?` — ${r.mobile}`:""}`}/>{id&&(!doctors.length?<Empty text="Add at least one doctor before saving patient history."/>:<form onSubmit={save}><Field name="doctor_fee" label="Doctor fee" type="number" required/><label className="prescription-upload"><Camera size={23}/><strong>Take prescription photo or attach images</strong><span>Camera, JPG, PNG or WEBP · multiple images allowed</span><input name="history_files" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple required/></label><div className="form-actions"><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Add to patient history</button></div></form>)}</div><div className="panel history-list"><h2>Complete patient history</h2>{loading?<LoadingPanel/>:history.length?<div className="timeline">{history.map(r=><div className="timeline-item" key={r.id}><span>{fmtDate(r.visited_at)}</span><div><h3>{r.doctor?.name||"Doctor"} · Doctor fee {money(r.doctor_fee)}</h3>{r.symptoms&&<p><b>Symptoms:</b> {r.symptoms}</p>}{r.diagnosis&&<p><b>Diagnosis:</b> {r.diagnosis}</p>}{r.clinical_notes&&<p><b>Clinical notes:</b> {r.clinical_notes}</p>}{r.prescription_notes&&<p><b>Prescription:</b> {r.prescription_notes}</p>}{r.prescription_attachments?.length>0&&<div className="prescription-gallery full-images">{r.prescription_attachments.map((a:Row)=>a.content_type?.startsWith("image/")?<div className="prescription-image-full" key={a.id}><img src={urls[a.id]} alt={a.file_name}/><span>{a.file_name}</span></div>:<a className="prescription-file" key={a.id} href={urls[a.id]} target="_blank" rel="noreferrer"><Paperclip/><span>{a.file_name}</span></a>)}</div>}</div></div>)}</div>:<Empty text={id?"No history found. Add the first fee and image above.":"Select a patient to view history."}/>}</div></>;
+  const search=patientSearch.trim().toLowerCase();
+  const filteredPatients=search?patients.filter(patient=>[patient.patient_id,patient.name,patient.mobile].some(value=>String(value||"").toLowerCase().includes(search))):patients;
+
+  return <>
+    <PageHead title="Patient History" subtitle="Add doctor fee, follow-up date and prescription images"/>
+    <div className="panel history-entry">
+      <label className="field">
+        <span>Search patient by ID, name or mobile number</span>
+        <div className="search-box patient-history-search"><Search size={15}/><input value={patientSearch} onChange={e=>setPatientSearch(e.target.value)} placeholder="Type patient ID, name or mobile number"/></div>
+      </label>
+      <SelectField name="patient" label="Select patient" rows={filteredPatients} value={id} onChange={setId} text={r=>`${r.patient_id} — ${r.name}${r.mobile?` — ${r.mobile}`:""}`}/>
+      {patientSearch&&filteredPatients.length===0&&<div className="error-box">No matching patient found.</div>}
+      {id&&(!doctors.length?<Empty text="Add at least one doctor before saving patient history."/>:<form onSubmit={save}>
+        <div className="form-grid"><Field name="doctor_fee" label="Doctor fee" type="number" required/><Field name="follow_up_date" label="Follow-up date" type="date" required/></div>
+        <label className="prescription-upload"><Camera size={23}/><strong>Take prescription photo or attach images</strong><span>Camera, JPG, PNG or WEBP · multiple images allowed</span><input name="history_files" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple required/></label>
+        <div className="form-actions"><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Add to patient history</button></div>
+      </form>)}
+    </div>
+    <div className="panel history-list"><h2>Complete patient history</h2>{loading?<LoadingPanel/>:history.length?<div className="timeline">{history.map(r=><div className="timeline-item" key={r.id}><span>{fmtDate(r.visited_at)}</span><div><h3>{r.doctor?.name||"Doctor"} · Doctor fee {money(r.doctor_fee)}</h3>{r.follow_up_date&&<p><b>Follow-up date:</b> {fmtDate(r.follow_up_date)}</p>}{r.symptoms&&<p><b>Symptoms:</b> {r.symptoms}</p>}{r.diagnosis&&<p><b>Diagnosis:</b> {r.diagnosis}</p>}{r.clinical_notes&&<p><b>Clinical notes:</b> {r.clinical_notes}</p>}{r.prescription_notes&&<p><b>Prescription:</b> {r.prescription_notes}</p>}{r.prescription_attachments?.length>0&&<div className="prescription-gallery full-images">{r.prescription_attachments.map((a:Row)=>a.content_type?.startsWith("image/")?<div className="prescription-image-full" key={a.id}><img src={urls[a.id]} alt={a.file_name}/><span>{a.file_name}</span></div>:<a className="prescription-file" key={a.id} href={urls[a.id]} target="_blank" rel="noreferrer"><Paperclip/><span>{a.file_name}</span></a>)}</div>}</div></div>)}</div>:<Empty text={id?"No history found. Add the first fee and image above.":"Select a patient to view history."}/>}</div>
+  </>;
 }
 function Modal({title,subtitle,onClose,children}:{title:string;subtitle:string;onClose:()=>void;children:React.ReactNode}){return <div className="modal-wrap"><div className="modal"><div className="modal-head"><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-btn" onClick={onClose}><X size={19}/></button></div>{children}</div></div>}
 function LoadingPanel(){return <div className="loading-panel"><LoaderCircle className="spin"/> Loading database records…</div>}
