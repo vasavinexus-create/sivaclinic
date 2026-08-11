@@ -102,7 +102,7 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
   const [id,setId]=useState("");
   const [patientQuery,setPatientQuery]=useState("");
   const [patientListOpen,setPatientListOpen]=useState(false);
-  const [selectedImages,setSelectedImages]=useState<string[]>([]);
+  const [selectedImageFiles,setSelectedImageFiles]=useState<File[]>([]);
   const [refresh,setRefresh]=useState(0);
   const [saving,setSaving]=useState(false);
   const [history,setHistory]=useState<Row[]>([]);
@@ -128,9 +128,10 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
   const save=async(e:FormEvent<HTMLFormElement>)=>{
     e.preventDefault();
     if(!id||!doctors.length)return;
+    if(!selectedImageFiles.length){notify("Take or select at least one prescription image.");return}
     const form=e.currentTarget;
     const values=new FormData(form);
-    const files=Array.from((form.elements.namedItem("history_files") as HTMLInputElement)?.files||[]);
+    const files=selectedImageFiles;
     setSaving(true);
     const {data,error}=await supabase!.from("consultations").insert({
       organization_id:profile.organization_id,
@@ -154,7 +155,7 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
     setSaving(false);
     notify(`Doctor fee and ${uploaded} prescription image${uploaded===1?"":"s"} saved`);
     form.reset();
-    setSelectedImages([]);
+    setSelectedImageFiles([]);
     setRefresh(v=>v+1);
   };
 
@@ -175,8 +176,11 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
       {patientQuery&&!id&&<div className="patient-search-hint">Choose a patient from the matching list.</div>}
       {id&&(!doctors.length?<Empty text="Add at least one doctor before saving patient history."/>:<form onSubmit={save}>
         <div className="form-grid"><Field name="doctor_fee" label="Doctor fee" type="number" required/><Field name="follow_up_date" label="Follow-up date" type="date"/></div>
-        <label className="prescription-upload"><Camera size={23}/><strong>Take prescription photos or attach multiple images</strong><span>Camera, JPG, PNG or WEBP · select one or many images</span><input name="history_files" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple required onChange={e=>setSelectedImages(Array.from(e.target.files||[]).map(file=>file.name))}/></label>
-        {selectedImages.length>0&&<div className="selected-images"><strong>{selectedImages.length} image{selectedImages.length===1?"":"s"} selected</strong>{selectedImages.map(name=><span key={name}>{name}</span>)}</div>}
+        <div className="prescription-actions">
+          <label className="prescription-action"><Camera size={22}/><strong>Take photo</strong><span>Press again to add another camera photo</span><input type="file" accept="image/*" capture="environment" onChange={e=>{const added=Array.from(e.target.files||[]);setSelectedImageFiles(current=>[...current,...added]);e.target.value=""}}/></label>
+          <label className="prescription-action"><Paperclip size={22}/><strong>Choose images</strong><span>Select multiple images from files or gallery</span><input type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={e=>{const added=Array.from(e.target.files||[]);setSelectedImageFiles(current=>[...current,...added]);e.target.value=""}}/></label>
+        </div>
+        {selectedImageFiles.length>0&&<div className="selected-images"><strong>{selectedImageFiles.length} image{selectedImageFiles.length===1?"":"s"} ready to upload</strong>{selectedImageFiles.map((file,index)=><span key={`${file.name}-${file.lastModified}-${index}`}>{index+1}. {file.name}</span>)}</div>}
         <div className="form-actions"><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Add to patient history</button></div>
       </form>)}
     </div>
