@@ -5,7 +5,7 @@ import { supabase } from "../lib/supabase";
 import {
   Activity, AlertTriangle, Bell, Boxes, CalendarDays, Camera, CheckCircle2, ChevronDown, CircleDollarSign,
   ClipboardPlus, CreditCard, FileText, LayoutDashboard, LoaderCircle, LogOut, Menu, PackagePlus,
-  Paperclip, Pill, Plus, Pencil, RefreshCw, Search, Settings, ShoppingCart, Stethoscope, Trash2, UserRoundPlus,
+  Paperclip, Phone, Pill, Plus, Pencil, RefreshCw, Search, Settings, ShoppingCart, Stethoscope, Trash2, UserRoundPlus,
   Users, Wallet, X, ShieldCheck, TrendingUp, IndianRupee
 } from "lucide-react";
 
@@ -15,7 +15,7 @@ type ModuleConfig = { table:string; title:string; subtitle:string; columns:Array
 
 const nav = [
   {label:"Dashboard",icon:LayoutDashboard}, {title:"CLINIC"}, {label:"Patients",icon:Users},
-  {label:"Consultation",icon:Stethoscope}, {label:"Patient History",icon:FileText}, {label:"Doctors",icon:Activity},
+  {label:"Consultation",icon:Stethoscope}, {label:"Patient History",icon:FileText}, {label:"Follow-up Alerts",icon:Bell}, {label:"Doctors",icon:Activity},
   {title:"PHARMACY"}, {label:"Billing",icon:ShoppingCart}, {label:"Sales",icon:CircleDollarSign},
   {label:"Products",icon:Pill}, {label:"Inventory",icon:Boxes}, {label:"Low Stock",icon:AlertTriangle},
   {label:"Expiry Alerts",icon:AlertTriangle}, {title:"PURCHASES"}, {label:"New Purchase",icon:PackagePlus},
@@ -51,7 +51,7 @@ function Loading(){return <div className="loading-page"><LoaderCircle className=
 
 function Page({active,profile,notify}:{active:string;profile:Profile;notify:(s:string)=>void}){
   if(active==="Dashboard")return <Dashboard/>; if(configs[active])return <CrudPage config={configs[active]} profile={profile} notify={notify}/>;
-  if(active==="Consultation")return <Consultation profile={profile} notify={notify}/>; if(active==="Patient History")return <PatientHistorySimple profile={profile} notify={notify}/>;
+  if(active==="Consultation")return <Consultation profile={profile} notify={notify}/>; if(active==="Patient History")return <PatientHistorySimple profile={profile} notify={notify}/>; if(active==="Follow-up Alerts")return <FollowUpAlerts/>;
   if(active==="Billing")return <Billing profile={profile} notify={notify}/>; if(active==="Sales")return <Sales/>;
   if(active==="Inventory")return <Inventory mode="all"/>; if(active==="Low Stock")return <Inventory mode="low"/>; if(active==="Expiry Alerts")return <Inventory mode="expiry"/>;
   if(active==="New Purchase")return <Purchase profile={profile} notify={notify}/>; if(active==="Purchase History")return <Purchases/>;
@@ -101,6 +101,7 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
   const {rows:doctors}=useRows("doctors","id,name");
   const [id,setId]=useState("");
   const [patientQuery,setPatientQuery]=useState("");
+  const [patientListOpen,setPatientListOpen]=useState(false);
   const [selectedImages,setSelectedImages]=useState<string[]>([]);
   const [refresh,setRefresh]=useState(0);
   const [saving,setSaving]=useState(false);
@@ -158,19 +159,18 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
   };
 
   const patientLabel=(patient:Row)=>`${patient.patient_id} — ${patient.name}${patient.mobile?` — ${patient.mobile}`:""}`;
-  const choosePatient=(value:string)=>{
-    setPatientQuery(value);
-    const patient=patients.find(row=>patientLabel(row).toLowerCase()===value.toLowerCase());
-    setId(patient?.id||"");
-  };
+  const patientMatches=patients.filter(patient=>[patient.patient_id,patient.name,patient.mobile].some(value=>String(value||"").toLowerCase().includes(patientQuery.trim().toLowerCase()))).slice(0,20);
+  const choosePatient=(patient:Row)=>{setPatientQuery(patientLabel(patient));setId(patient.id);setPatientListOpen(false)};
 
   return <>
     <PageHead title="Patient History" subtitle="Add doctor fee, follow-up date and prescription images"/>
     <div className="panel history-entry">
       <label className="field">
         <span>Select patient</span>
-        <div className="search-box patient-history-search"><Search size={15}/><input list="patient-history-patients" value={patientQuery} onChange={e=>choosePatient(e.target.value)} placeholder="Search by patient ID, name or mobile number" autoComplete="off"/></div>
-        <datalist id="patient-history-patients">{patients.map(patient=><option key={patient.id} value={patientLabel(patient)}/>)}</datalist>
+        <div className="patient-combobox">
+          <div className="search-box patient-history-search"><Search size={15}/><input value={patientQuery} onFocus={()=>setPatientListOpen(true)} onChange={e=>{setPatientQuery(e.target.value);setId("");setPatientListOpen(true)}} placeholder="Search by patient ID, name or mobile number" autoComplete="off" role="combobox" aria-expanded={patientListOpen} aria-controls="patient-history-listbox"/></div>
+          {patientListOpen&&<div className="patient-listbox" id="patient-history-listbox" role="listbox">{patientMatches.length?patientMatches.map(patient=><button type="button" role="option" aria-selected={patient.id===id} key={patient.id} onMouseDown={e=>e.preventDefault()} onClick={()=>choosePatient(patient)}><strong>{patient.patient_id} · {patient.name}</strong><span>{patient.mobile||"No mobile number"}</span></button>):<div className="patient-list-empty">No matching patient found</div>}</div>}
+        </div>
       </label>
       {patientQuery&&!id&&<div className="patient-search-hint">Choose a patient from the matching list.</div>}
       {id&&(!doctors.length?<Empty text="Add at least one doctor before saving patient history."/>:<form onSubmit={save}>
@@ -181,6 +181,52 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
       </form>)}
     </div>
     <div className="panel history-list"><h2>Complete patient history</h2>{loading?<LoadingPanel/>:history.length?<div className="timeline">{history.map(r=><div className="timeline-item" key={r.id}><span>{fmtDate(r.visited_at)}</span><div><h3>{r.doctor?.name||"Doctor"} · Doctor fee {money(r.doctor_fee)}</h3>{r.follow_up_date&&<p><b>Follow-up date:</b> {fmtDate(r.follow_up_date)}</p>}{r.symptoms&&<p><b>Symptoms:</b> {r.symptoms}</p>}{r.diagnosis&&<p><b>Diagnosis:</b> {r.diagnosis}</p>}{r.clinical_notes&&<p><b>Clinical notes:</b> {r.clinical_notes}</p>}{r.prescription_notes&&<p><b>Prescription:</b> {r.prescription_notes}</p>}{r.prescription_attachments?.length>0&&<div className="prescription-gallery full-images">{r.prescription_attachments.map((a:Row)=>a.content_type?.startsWith("image/")?<div className="prescription-image-full" key={a.id}><img src={urls[a.id]} alt={a.file_name}/><span>{a.file_name}</span></div>:<a className="prescription-file" key={a.id} href={urls[a.id]} target="_blank" rel="noreferrer"><Paperclip/><span>{a.file_name}</span></a>)}</div>}</div></div>)}</div>:<Empty text={id?"No history found. Add the first fee and image above.":"Select a patient to view history."}/>}</div>
+  </>;
+}
+
+function FollowUpAlerts(){
+  const today=()=>{const now=new Date(),offset=now.getTimezoneOffset();return new Date(now.getTime()-offset*60000).toISOString().slice(0,10)};
+  const [date,setDate]=useState(today);
+  const [rows,setRows]=useState<Row[]>([]);
+  const [urls,setUrls]=useState<Record<string,string>>({});
+  const [selected,setSelected]=useState("");
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState("");
+
+  useEffect(()=>{
+    if(!supabase)return;
+    setLoading(true);setError("");setSelected("");
+    supabase.from("consultations").select("id,visited_at,follow_up_date,prescription_notes,patient:patients(id,patient_id,name,mobile),prescription_attachments(id,storage_path,file_name,content_type)").eq("follow_up_date",date).order("visited_at",{ascending:false}).then(async({data,error:queryError})=>{
+      if(queryError){setError(queryError.message);setRows([]);setLoading(false);return}
+      const records=data||[];
+      setRows(records);
+      const attachments=records.flatMap(row=>row.prescription_attachments||[]);
+      const pairs=await Promise.all(attachments.map(async(attachment:Row)=>{
+        const {data:signed}=await supabase!.storage.from("prescriptions").createSignedUrl(attachment.storage_path,3600);
+        return [attachment.id,signed?.signedUrl||""];
+      }));
+      setUrls(Object.fromEntries(pairs));
+      setLoading(false);
+    });
+  },[date]);
+
+  return <>
+    <PageHead title="Follow-up Alerts" subtitle="Patients scheduled for follow-up on the selected date"/>
+    <div className="panel followup-toolbar"><label className="field"><span>Follow-up date</span><input type="date" value={date} onChange={event=>setDate(event.target.value||today())}/></label></div>
+    <div className="panel followup-results">
+      <h2>{rows.length} patient{rows.length===1?"":"s"} for {fmtDate(`${date}T00:00:00`)}</h2>
+      {error?<ErrorBox text={error}/>:loading?<LoadingPanel/>:rows.length?<div className="followup-list">{rows.map(row=>{
+        const patient=row.patient||{};
+        const open=selected===row.id;
+        return <article className="followup-card" key={row.id}>
+          <div className="followup-patient-row">
+            <button className="followup-patient" type="button" onClick={()=>setSelected(open?"":row.id)}><strong>{patient.patient_id} · {patient.name}</strong><span>Last consultation: {fmtDate(row.visited_at)} · Click to {open?"hide":"show"} prescription</span></button>
+            {patient.mobile?<a className="call-button" href={`tel:${String(patient.mobile).replace(/[^+\d]/g,"")}`}><Phone size={16}/> Call {patient.mobile}</a>:<span className="no-mobile">No mobile number</span>}
+          </div>
+          {open&&<div className="last-prescription"><h3>Last prescription</h3>{row.prescription_notes&&<p>{row.prescription_notes}</p>}{row.prescription_attachments?.length?<div className="prescription-gallery full-images">{row.prescription_attachments.map((attachment:Row)=>attachment.content_type?.startsWith("image/")?<div className="prescription-image-full" key={attachment.id}><img src={urls[attachment.id]} alt={attachment.file_name}/><span>{attachment.file_name}</span></div>:<a className="prescription-file" key={attachment.id} href={urls[attachment.id]} target="_blank" rel="noreferrer"><Paperclip/><span>{attachment.file_name}</span></a>)}</div>:!row.prescription_notes&&<p>No prescription attachment found.</p>}</div>}
+        </article>;
+      })}</div>:<Empty text="No patients have a follow-up on this date."/>}
+    </div>
   </>;
 }
 function Modal({title,subtitle,onClose,children}:{title:string;subtitle:string;onClose:()=>void;children:React.ReactNode}){return <div className="modal-wrap"><div className="modal"><div className="modal-head"><div><h2>{title}</h2><p>{subtitle}</p></div><button className="icon-btn" onClick={onClose}><X size={19}/></button></div>{children}</div></div>}
