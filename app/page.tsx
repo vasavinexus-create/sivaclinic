@@ -174,7 +174,7 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
       </label>
       {patientQuery&&!id&&<div className="patient-search-hint">Choose a patient from the matching list.</div>}
       {id&&(!doctors.length?<Empty text="Add at least one doctor before saving patient history."/>:<form onSubmit={save}>
-        <div className="form-grid"><Field name="doctor_fee" label="Doctor fee" type="number" required/><Field name="follow_up_date" label="Follow-up date" type="date" required/></div>
+        <div className="form-grid"><Field name="doctor_fee" label="Doctor fee" type="number" required/><Field name="follow_up_date" label="Follow-up date" type="date"/></div>
         <label className="prescription-upload"><Camera size={23}/><strong>Take prescription photos or attach multiple images</strong><span>Camera, JPG, PNG or WEBP · select one or many images</span><input name="history_files" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple required onChange={e=>setSelectedImages(Array.from(e.target.files||[]).map(file=>file.name))}/></label>
         {selectedImages.length>0&&<div className="selected-images"><strong>{selectedImages.length} image{selectedImages.length===1?"":"s"} selected</strong>{selectedImages.map(name=><span key={name}>{name}</span>)}</div>}
         <div className="form-actions"><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Add to patient history</button></div>
