@@ -100,7 +100,8 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
   const {rows:patients}=useRows("patients","id,patient_id,name,mobile");
   const {rows:doctors}=useRows("doctors","id,name");
   const [id,setId]=useState("");
-  const [patientSearch,setPatientSearch]=useState("");
+  const [patientQuery,setPatientQuery]=useState("");
+  const [selectedImages,setSelectedImages]=useState<string[]>([]);
   const [refresh,setRefresh]=useState(0);
   const [saving,setSaving]=useState(false);
   const [history,setHistory]=useState<Row[]>([]);
@@ -152,24 +153,30 @@ function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string
     setSaving(false);
     notify(`Doctor fee and ${uploaded} prescription image${uploaded===1?"":"s"} saved`);
     form.reset();
+    setSelectedImages([]);
     setRefresh(v=>v+1);
   };
 
-  const search=patientSearch.trim().toLowerCase();
-  const filteredPatients=search?patients.filter(patient=>[patient.patient_id,patient.name,patient.mobile].some(value=>String(value||"").toLowerCase().includes(search))):patients;
+  const patientLabel=(patient:Row)=>`${patient.patient_id} — ${patient.name}${patient.mobile?` — ${patient.mobile}`:""}`;
+  const choosePatient=(value:string)=>{
+    setPatientQuery(value);
+    const patient=patients.find(row=>patientLabel(row).toLowerCase()===value.toLowerCase());
+    setId(patient?.id||"");
+  };
 
   return <>
     <PageHead title="Patient History" subtitle="Add doctor fee, follow-up date and prescription images"/>
     <div className="panel history-entry">
       <label className="field">
-        <span>Search patient by ID, name or mobile number</span>
-        <div className="search-box patient-history-search"><Search size={15}/><input value={patientSearch} onChange={e=>setPatientSearch(e.target.value)} placeholder="Type patient ID, name or mobile number"/></div>
+        <span>Select patient</span>
+        <div className="search-box patient-history-search"><Search size={15}/><input list="patient-history-patients" value={patientQuery} onChange={e=>choosePatient(e.target.value)} placeholder="Search by patient ID, name or mobile number" autoComplete="off"/></div>
+        <datalist id="patient-history-patients">{patients.map(patient=><option key={patient.id} value={patientLabel(patient)}/>)}</datalist>
       </label>
-      <SelectField name="patient" label="Select patient" rows={filteredPatients} value={id} onChange={setId} text={r=>`${r.patient_id} — ${r.name}${r.mobile?` — ${r.mobile}`:""}`}/>
-      {patientSearch&&filteredPatients.length===0&&<div className="error-box">No matching patient found.</div>}
+      {patientQuery&&!id&&<div className="patient-search-hint">Choose a patient from the matching list.</div>}
       {id&&(!doctors.length?<Empty text="Add at least one doctor before saving patient history."/>:<form onSubmit={save}>
         <div className="form-grid"><Field name="doctor_fee" label="Doctor fee" type="number" required/><Field name="follow_up_date" label="Follow-up date" type="date" required/></div>
-        <label className="prescription-upload"><Camera size={23}/><strong>Take prescription photo or attach images</strong><span>Camera, JPG, PNG or WEBP · multiple images allowed</span><input name="history_files" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple required/></label>
+        <label className="prescription-upload"><Camera size={23}/><strong>Take prescription photos or attach multiple images</strong><span>Camera, JPG, PNG or WEBP · select one or many images</span><input name="history_files" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple required onChange={e=>setSelectedImages(Array.from(e.target.files||[]).map(file=>file.name))}/></label>
+        {selectedImages.length>0&&<div className="selected-images"><strong>{selectedImages.length} image{selectedImages.length===1?"":"s"} selected</strong>{selectedImages.map(name=><span key={name}>{name}</span>)}</div>}
         <div className="form-actions"><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Add to patient history</button></div>
       </form>)}
     </div>
