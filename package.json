@@ -11,9 +11,16 @@
     "start": "next start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "mobile:build": "next build && cap sync android",
+    "mobile:sync": "cap sync android",
+    "mobile:open": "cap open android",
+    "android:assemble": "cd android && gradlew.bat assembleDebug"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "@supabase/supabase-js": "^2.112.3",
     "drizzle-orm": "0.45.2",
     "lucide-react": "^1.31.0",
