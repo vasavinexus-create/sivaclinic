@@ -40,3 +40,31 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+
+# local build caches
+/.gradle-local/
+/.gradle/
+
+# capacitor / android generated outputs
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/release/
+/android/app/debug/
+*.apk
+*.aab
+
+# local editor / OS files
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+
+# temporary imports and generated OCR/PDF working files
+/tmp/
+*.tmp
+*.temp
+
+# local logs and reports
+*.log
+/android/build/reports/
