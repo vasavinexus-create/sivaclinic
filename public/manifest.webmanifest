@@ -1,6 +1,6 @@
 {
-  "name": "SivaCare Clinic & Pharmacy",
-  "short_name": "SivaCare",
+  "name": "MediFlow Clinic & Pharmacy",
+  "short_name": "MediFlow",
   "description": "Clinic, pharmacy, inventory, purchase and accounts management.",
   "start_url": "/",
   "scope": "/",
@@ -11,10 +11,10 @@
   "categories": ["medical", "business", "productivity"],
   "icons": [
     {
-      "src": "/icons/sivacare.svg",
+      "src": "/mediflow-logo.jpg",
       "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "maskable"
+      "type": "image/jpeg",
+      "purpose": "any"
     }
   ],
   "shortcuts": [
@@ -23,14 +23,14 @@
       "short_name": "Billing",
       "description": "Open pharmacy billing",
       "url": "/?page=Billing",
-      "icons": [{ "src": "/icons/sivacare.svg", "sizes": "any", "type": "image/svg+xml" }]
+      "icons": [{ "src": "/mediflow-logo.jpg", "sizes": "any", "type": "image/jpeg" }]
     },
     {
       "name": "Consultation",
       "short_name": "Consult",
       "description": "Open consultation entry",
       "url": "/?page=Consultation",
-      "icons": [{ "src": "/icons/sivacare.svg", "sizes": "any", "type": "image/svg+xml" }]
+      "icons": [{ "src": "/mediflow-logo.jpg", "sizes": "any", "type": "image/jpeg" }]
     }
   ]
 }

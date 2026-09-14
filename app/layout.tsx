@@ -3,21 +3,21 @@ import "./globals.css";
 import PwaRegister from "./pwa-register";
 
 export const metadata: Metadata = {
-  title: "SivaCare — Clinic & Pharmacy",
+  title: "MediFlow — Clinic & Pharmacy",
   description: "Multi-tenant clinic, consultation, pharmacy, inventory and accounts management.",
   manifest: "/manifest.webmanifest",
-  applicationName: "SivaCare",
+  applicationName: "MediFlow",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "SivaCare",
+    title: "MediFlow",
   },
   formatDetection: {
     telephone: true,
   },
   icons: {
-    icon: [{ url: "/favicon.svg" }, { url: "/icons/sivacare.svg", type: "image/svg+xml" }],
-    apple: "/icons/sivacare.svg",
+    icon: [{ url: "/mediflow-logo.jpg" }],
+    apple: "/mediflow-logo.jpg",
   },
 };
 
