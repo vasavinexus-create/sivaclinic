@@ -290,6 +290,126 @@ $$;
 revoke all on function public.update_invite_login_username(uuid,text,text,text,public.app_role,boolean) from public;
 grant execute on function public.update_invite_login_username(uuid,text,text,text,public.app_role,boolean) to authenticated;
 
+create or replace function public.update_clinic_details(
+  p_organization_id uuid,
+  p_clinic_name text,
+  p_phone text default null,
+  p_pharmacy_name text default null,
+  p_address text default null,
+  p_gst_number text default null,
+  p_drug_license_number text default null,
+  p_active boolean default true
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_software_owner() then
+    raise exception 'Only the software owner can edit clinics';
+  end if;
+  if p_organization_id is null then raise exception 'Clinic is required'; end if;
+  if nullif(trim(coalesce(p_clinic_name, '')), '') is null then raise exception 'Clinic name is required'; end if;
+
+  update public.organizations
+  set name = trim(p_clinic_name),
+      clinic_name = trim(p_clinic_name),
+      pharmacy_name = coalesce(nullif(trim(p_pharmacy_name), ''), pharmacy_name, trim(p_clinic_name) || ' Pharmacy'),
+      phone = nullif(trim(coalesce(p_phone, '')), ''),
+      address = nullif(trim(coalesce(p_address, '')), ''),
+      gst_number = nullif(trim(coalesce(p_gst_number, '')), ''),
+      drug_license_number = nullif(trim(coalesce(p_drug_license_number, '')), ''),
+      active = coalesce(p_active, true)
+  where id = p_organization_id;
+
+  if not found then raise exception 'Clinic not found'; end if;
+end;
+$$;
+
+revoke all on function public.update_clinic_details(uuid,text,text,text,text,text,text,boolean) from public;
+grant execute on function public.update_clinic_details(uuid,text,text,text,text,text,text,boolean) to authenticated;
+
+create or replace function public.update_clinic_admin_login(
+  p_organization_id uuid,
+  p_admin_username text,
+  p_admin_password text default null,
+  p_admin_name text default null
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_username text := public.normalize_username(p_admin_username);
+  v_profile_id uuid;
+  v_invite_id uuid;
+begin
+  if not public.is_software_owner() then
+    raise exception 'Only the software owner can edit clinic admin login';
+  end if;
+  if p_organization_id is null then raise exception 'Clinic is required'; end if;
+  if v_username = '' then raise exception 'Admin username is required'; end if;
+  if coalesce(p_admin_password, '') <> '' and length(p_admin_password) < 6 then
+    raise exception 'Password must be at least 6 characters';
+  end if;
+
+  select id into v_profile_id
+  from public.profiles
+  where organization_id = p_organization_id and role = 'admin'::public.app_role
+  order by created_at asc
+  limit 1;
+
+  select id into v_invite_id
+  from public.user_invites
+  where organization_id = p_organization_id and role = 'admin'::public.app_role
+  order by created_at asc
+  limit 1;
+
+  if not public.username_available_for_user(v_username, v_profile_id, v_invite_id) then
+    raise exception 'Username already exists';
+  end if;
+
+  if v_profile_id is not null then
+    update public.profiles
+    set username = v_username,
+        full_name = coalesce(nullif(trim(p_admin_name), ''), full_name),
+        updated_at = now()
+    where id = v_profile_id;
+  end if;
+
+  if v_invite_id is not null then
+    update public.user_invites
+    set username = v_username,
+        email = public.login_email_for_username(v_username),
+        login_email = public.login_email_for_username(v_username),
+        password_hash = case when coalesce(p_admin_password, '') = '' then password_hash else crypt(p_admin_password, gen_salt('bf')) end,
+        full_name = coalesce(nullif(trim(p_admin_name), ''), full_name),
+        active = true
+    where id = v_invite_id;
+  else
+    insert into public.user_invites(organization_id, email, username, login_email, password_hash, full_name, role, active, accepted_by, accepted_at, created_by)
+    values (
+      p_organization_id,
+      public.login_email_for_username(v_username),
+      v_username,
+      public.login_email_for_username(v_username),
+      case when coalesce(p_admin_password, '') = '' then null else crypt(p_admin_password, gen_salt('bf')) end,
+      coalesce(nullif(trim(p_admin_name), ''), v_username),
+      'admin',
+      true,
+      v_profile_id,
+      case when v_profile_id is null then null else now() end,
+      auth.uid()
+    );
+  end if;
+end;
+$$;
+
+revoke all on function public.update_clinic_admin_login(uuid,text,text,text) from public;
+grant execute on function public.update_clinic_admin_login(uuid,text,text,text) to authenticated;
+
 create or replace function public.prepare_username_login(
   p_username text,
   p_password text
@@ -383,3 +503,6 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_auth_user();
+
+-- Refresh Supabase/PostgREST RPC schema cache so newly-created functions are callable immediately.
+select pg_notify('pgrst', 'reload schema');
