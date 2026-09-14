@@ -2,7 +2,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
   appId: "com.sivacare.clinic",
-  appName: "SivaCare",
+  appName: "MediFlow",
   webDir: "out",
   server: {
     androidScheme: "https",

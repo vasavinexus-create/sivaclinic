@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">SivaCare</string>
-    <string name="title_activity_main">SivaCare</string>
+    <string name="app_name">MediFlow</string>
+    <string name="title_activity_main">MediFlow</string>
     <string name="package_name">com.sivacare.clinic</string>
     <string name="custom_url_scheme">com.sivacare.clinic</string>
 </resources>
