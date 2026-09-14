@@ -284,6 +284,101 @@ body{font-size:20px;line-height:1.45}
   .unit-config-grid{grid-template-columns:1fr 1fr}
 }
 
+/* ── Pharmacy Billing: Clean Interactive Cart Table ── */
+.cart-row-interactive{
+  cursor:pointer;
+  user-select:none;
+  transition:background .15s ease;
+}
+.cart-row-interactive:hover{
+  background:#f0f7f4 !important;
+}
+.cart-row-interactive:active{
+  background:#e3f0ea !important;
+}
+
+@media(max-width:900px){
+  .billing-panel .data-wrap{
+    overflow-x:visible !important;
+  }
+  .billing-table{
+    display:table !important;
+    width:100% !important;
+    table-layout:fixed !important;
+    border-collapse:collapse !important;
+  }
+  .billing-table thead{
+    display:table-header-group !important;
+  }
+  .billing-table tbody{
+    display:table-row-group !important;
+  }
+  .billing-table tr{
+    display:table-row !important;
+  }
+  .billing-table th,
+  .billing-table td{
+    display:table-cell !important;
+    padding:8px 4px !important;
+    vertical-align:middle !important;
+    border-bottom:1px solid var(--line) !important;
+  }
+  .billing-table th{
+    font-size:11px !important;
+    font-weight:700 !important;
+    color:var(--muted,#6b7280) !important;
+    text-transform:uppercase !important;
+  }
+  .billing-table th.col-rate,
+  .billing-table th.col-total{
+    text-align:right !important;
+  }
+  .billing-table th.col-qty{
+    text-align:center !important;
+  }
+  .billing-table .col-batch,
+  .billing-table .col-expiry,
+  .billing-table .col-gst,
+  .billing-table .col-action{
+    display:none !important;
+  }
+  .billing-table .col-med{
+    width:42% !important;
+    text-align:left !important;
+  }
+  .billing-table .col-med strong{
+    display:block !important;
+    font-size:13px !important;
+    color:var(--fg,#111) !important;
+    line-height:1.2 !important;
+  }
+  .billing-table .col-qty{
+    display:table-cell !important;
+    width:18% !important;
+    text-align:center !important;
+  }
+  .billing-table .col-rate{
+    width:20% !important;
+    text-align:right !important;
+    font-size:12px !important;
+  }
+  .billing-table .col-total{
+    width:20% !important;
+    text-align:right !important;
+    font-size:12px !important;
+    font-weight:600 !important;
+  }
+  .billing-table .table-qty-input{
+    width:40px !important;
+    height:28px !important;
+    padding:0 2px !important;
+    font-size:12px !important;
+    text-align:center !important;
+  }
+}
+
+
+
 
 
 
