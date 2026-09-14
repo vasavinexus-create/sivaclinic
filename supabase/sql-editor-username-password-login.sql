@@ -132,8 +132,7 @@ create or replace function public.upsert_user_invite_username(
   p_username text,
   p_password text,
   p_full_name text,
-  p_role public.app_role,
-  p_doctor_id uuid default null
+  p_role text
 )
 returns uuid
 language plpgsql
@@ -165,8 +164,8 @@ begin
     public.login_email_for_username(v_username),
     crypt(p_password, gen_salt('bf')),
     trim(p_full_name),
-    p_role,
-    p_doctor_id,
+    p_role::public.app_role,
+    null,
     auth.uid()
   )
   on conflict (organization_id, email) do update set
@@ -183,8 +182,10 @@ begin
 end;
 $$;
 
-revoke all on function public.upsert_user_invite_username(text,text,text,public.app_role,uuid) from public;
-grant execute on function public.upsert_user_invite_username(text,text,text,public.app_role,uuid) to authenticated;
+drop function if exists public.upsert_user_invite_username(text,text,text,public.app_role,uuid);
+drop function if exists public.upsert_user_invite_username(text,text,text,public.app_role);
+revoke all on function public.upsert_user_invite_username(text,text,text,text) from public;
+grant execute on function public.upsert_user_invite_username(text,text,text,text) to authenticated;
 
 create or replace function public.update_profile_login_username(
   p_profile_id uuid,
@@ -506,3 +507,12 @@ for each row execute function public.handle_new_auth_user();
 
 -- Refresh Supabase/PostgREST RPC schema cache so newly-created functions are callable immediately.
 select pg_notify('pgrst', 'reload schema');
+
+-- Verify the create-login RPC signature that the app calls.
+select
+  p.proname,
+  pg_get_function_identity_arguments(p.oid) as arguments
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname = 'upsert_user_invite_username';
