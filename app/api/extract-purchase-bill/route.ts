@@ -276,6 +276,12 @@ export async function POST(request: Request) {
       }, { status: 400 });
     }
 
+    if (!apiKey.startsWith("AIzaSy")) {
+      return NextResponse.json({
+        error: "Invalid Gemini API key format. Gemini REST API keys copied from Google AI Studio start with AIzaSy. OAuth or account tokens such as AQ. values will not work."
+      }, { status: 400 });
+    }
+
     // Save key to organization table for future use
     if (user_api_key) {
       try {
@@ -294,8 +300,6 @@ export async function POST(request: Request) {
 
     for (const model of modelsToTry) {
       try {
-        // Both AIzaSy (standard) and AQ. (auth keys since May 2026) use ?key= query param
-        // Auth keys are bound to a service account but still sent the same way as API keys
         const urlWithKey = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
         const headers: Record<string, string> = {

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, Check, CheckCircle2, ChevronRight, FileText, Filter, Key, LoaderCircle,
+  CheckCircle2, FileText, Key, LoaderCircle,
   PackagePlus, Plus, Search, ShieldAlert, Sparkles, Upload, X
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
@@ -29,7 +29,11 @@ export interface StagingItem {
   expiry_date: string;
   quantity: number;
   free_quantity: number;
+  purchase_unit: string;
+  sale_unit: string;
+  units_per_purchase_unit: number;
   rate: number;
+  purchase_rate_per_unit: number;
   mrp: number;
   selling_rate: number;
   discount_percent: number;
@@ -51,7 +55,6 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
   const [step, setStep] = useState<"upload" | "extracting" | "review" | "approved">("upload");
   const [file, setFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState("");
-  const [fileUrl, setFileUrl] = useState("");
 
   // API Key modal prompt state
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
@@ -211,7 +214,11 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
         expiry_date: expDate,
         quantity: qty,
         free_quantity: freeQty,
+        purchase_unit: raw.purchase_unit || raw.unit || "unit",
+        sale_unit: raw.sale_unit || "unit",
+        units_per_purchase_unit: 1,
         rate: rate,
+        purchase_rate_per_unit: rate,
         mrp: mrp,
         selling_rate: mrp,
         discount_percent: discountPct,
@@ -247,23 +254,16 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
 
     try {
       // 1. Safe Upload to Supabase Storage if image file
-      let storageUrl = "";
       if (supabase && selectedFile.type.startsWith("image/")) {
         try {
           const filePath = `invoices/${profile.organization_id}/${Date.now()}_${selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-          const { data: storageData } = await supabase.storage
+          await supabase.storage
             .from("prescription_attachments")
             .upload(filePath, selectedFile, { upsert: true });
-
-          if (storageData) {
-            storageUrl = filePath;
-          }
-        } catch (e) {
-          // Ignore storage upload errors silently
+        } catch {
+          // Best-effort attachment backup; extraction still uses the local file payload.
         }
       }
-      setFileUrl(storageUrl);
-
       // 2. Convert file to Base64 for Gemini API Route
       const reader = new FileReader();
       reader.readAsDataURL(selectedFile);
@@ -288,12 +288,9 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       return;
     }
 
-    // Client-side format check (informational only)
-    if (!keyFromForm.startsWith("AIzaSy") && !keyFromForm.startsWith("AQ.")) {
-      const proceed = window.confirm(
-        `The key you entered has an unrecognized format.\n\nDo you still want to try it?`
-      );
-      if (!proceed) return;
+    if (!keyFromForm.startsWith("AIzaSy")) {
+      notify("Invalid key format. Copy a Gemini API key from Google AI Studio; it should start with AIzaSy.");
+      return;
     }
 
     setUserGeminiKey(keyFromForm);
@@ -315,6 +312,11 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
         if (prod) {
           return {
             ...item,
+            purchase_unit: prod.purchase_unit || item.purchase_unit || "unit",
+            sale_unit: prod.sale_unit || item.sale_unit || "unit",
+            units_per_purchase_unit: Number(prod.default_units_per_purchase_unit || item.units_per_purchase_unit || 1) || 1,
+            purchase_rate_per_unit: Number(item.rate || 0) / (Number(prod.default_units_per_purchase_unit || item.units_per_purchase_unit || 1) || 1),
+            selling_rate: Number(item.selling_rate || prod.selling_rate || prod.mrp || item.mrp || 0),
             mapped_product_id: prod.id,
             mapped_product: prod,
             mapping_source: "saved_mapping" as const,
@@ -330,6 +332,11 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
         if (prodByBarcode) {
           return {
             ...item,
+            purchase_unit: prodByBarcode.purchase_unit || item.purchase_unit || "unit",
+            sale_unit: prodByBarcode.sale_unit || item.sale_unit || "unit",
+            units_per_purchase_unit: Number(prodByBarcode.default_units_per_purchase_unit || item.units_per_purchase_unit || 1) || 1,
+            purchase_rate_per_unit: Number(item.rate || 0) / (Number(prodByBarcode.default_units_per_purchase_unit || item.units_per_purchase_unit || 1) || 1),
+            selling_rate: Number(item.selling_rate || prodByBarcode.selling_rate || prodByBarcode.mrp || item.mrp || 0),
             mapped_product_id: prodByBarcode.id,
             mapped_product: prodByBarcode,
             mapping_source: "exact_barcode" as const,
@@ -387,8 +394,14 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       if (item.mapping_status === "suggested" && item.suggestions && item.suggestions.length > 0) {
         acceptedCount++;
         const topProd = item.suggestions[0].product;
+        const unitsPerPurchaseUnit = Number(topProd.default_units_per_purchase_unit || item.units_per_purchase_unit || 1) || 1;
         return {
           ...item,
+          purchase_unit: topProd.purchase_unit || item.purchase_unit || "unit",
+          sale_unit: topProd.sale_unit || item.sale_unit || "unit",
+          units_per_purchase_unit: unitsPerPurchaseUnit,
+          purchase_rate_per_unit: Number(item.rate || 0) / unitsPerPurchaseUnit,
+          selling_rate: Number(item.selling_rate || topProd.selling_rate || topProd.mrp || item.mrp || 0),
           mapped_product_id: topProd.id,
           mapped_product: topProd,
           mapping_source: "suggested" as const,
@@ -405,8 +418,14 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
   const handleSelectProduct = (index: number, product: Row) => {
     setItems((rows) => {
       const copy = [...rows];
+      const unitsPerPurchaseUnit = Number(product.default_units_per_purchase_unit || copy[index].units_per_purchase_unit || 1) || 1;
       copy[index] = {
         ...copy[index],
+        purchase_unit: product.purchase_unit || copy[index].purchase_unit || "unit",
+        sale_unit: product.sale_unit || copy[index].sale_unit || "unit",
+        units_per_purchase_unit: unitsPerPurchaseUnit,
+        purchase_rate_per_unit: Number(copy[index].rate || 0) / unitsPerPurchaseUnit,
+        selling_rate: Number(copy[index].selling_rate || product.selling_rate || product.mrp || copy[index].mrp || 0),
         mapped_product_id: product.id,
         mapped_product: product,
         mapping_source: "manual",
@@ -431,6 +450,9 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       manufacturer: newProductForm.manufacturer || currentItem.manufacturer || null,
       pack_size: newProductForm.pack_size || currentItem.pack || null,
       hsn_code: newProductForm.hsn_code || currentItem.hsn || null,
+      sale_unit: currentItem.sale_unit || "unit",
+      purchase_unit: currentItem.purchase_unit || currentItem.unit || "unit",
+      default_units_per_purchase_unit: Number(currentItem.units_per_purchase_unit || 1),
       mrp: Number(newProductForm.mrp || currentItem.mrp || 0),
       purchase_rate: Number(newProductForm.purchase_rate || currentItem.rate || 0),
       selling_rate: Number(newProductForm.mrp || currentItem.mrp || 0),
@@ -534,7 +556,12 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
 
       // 2. Loop through items & create Medicine Batches, Purchase Items, Stock Movements
       for (const item of items) {
-        const totalStockQty = item.quantity + item.free_quantity;
+        const unitsPerPurchaseUnit = Number(item.units_per_purchase_unit || 1) || 1;
+        const purchasePackQty = Number(item.quantity || 0);
+        const freePackQty = Number(item.free_quantity || 0);
+        const totalStockQty = (purchasePackQty + freePackQty) * unitsPerPurchaseUnit;
+        const freeStockQty = freePackQty * unitsPerPurchaseUnit;
+        const purchaseRatePerUnit = Number(item.rate || 0) / unitsPerPurchaseUnit;
 
         const { data: batch, error: batchErr } = await supabase
           .from("medicine_batches")
@@ -546,32 +573,51 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
             supplier_id: supplierId,
             purchase_id: purchase.id,
             quantity_received: totalStockQty,
-            free_quantity: item.free_quantity,
+            free_quantity: freeStockQty,
             current_stock: totalStockQty,
-            purchase_rate: item.rate,
+            purchase_rate: purchaseRatePerUnit,
             mrp: item.mrp,
             selling_rate: item.selling_rate || item.mrp,
-            gst_percent: item.gst_percent
+            gst_percent: item.gst_percent,
+            purchase_unit: item.purchase_unit || "unit",
+            sale_unit: item.sale_unit || "unit",
+            units_per_purchase_unit: unitsPerPurchaseUnit,
+            purchase_pack_qty: purchasePackQty,
+            free_pack_qty: freePackQty,
+            stock_unit_qty: totalStockQty
           })
           .select("id")
           .single();
 
-        if (!batch) continue;
+        if (batchErr || !batch) {
+          throw new Error(`Batch save failed for ${item.supplier_description}: ${batchErr?.message || "No batch returned"}`);
+        }
 
-        await supabase.from("purchase_items").insert({
+        const { error: itemErr } = await supabase.from("purchase_items").insert({
           organization_id: profile.organization_id,
           purchase_id: purchase.id,
           product_id: item.mapped_product_id!,
           batch_id: batch.id,
-          quantity: item.quantity,
-          free_quantity: item.free_quantity,
-          rate: item.rate,
+          quantity: totalStockQty,
+          free_quantity: 0,
+          rate: purchaseRatePerUnit,
           gst_percent: item.gst_percent,
           discount: item.discount_amount,
-          line_total: item.line_total
+          line_total: item.line_total,
+          purchase_unit: item.purchase_unit || "unit",
+          sale_unit: item.sale_unit || "unit",
+          units_per_purchase_unit: unitsPerPurchaseUnit,
+          purchase_pack_qty: purchasePackQty,
+          free_pack_qty: freePackQty,
+          stock_unit_qty: totalStockQty,
+          purchase_rate_per_unit: purchaseRatePerUnit
         });
 
-        await supabase.from("stock_movements").insert({
+        if (itemErr) {
+          throw new Error(`Purchase item save failed for ${item.supplier_description}: ${itemErr.message}`);
+        }
+
+        const { error: stockErr } = await supabase.from("stock_movements").insert({
           organization_id: profile.organization_id,
           product_id: item.mapped_product_id!,
           batch_id: batch.id,
@@ -583,6 +629,10 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
           balance_quantity: totalStockQty,
           created_by: profile.id
         });
+
+        if (stockErr) {
+          throw new Error(`Stock movement failed for ${item.supplier_description}: ${stockErr.message}`);
+        }
 
         // 3. Save / Upsert Confirmed Description -> Product Mappings
         if (item.supplier_description && item.mapped_product_id) {
@@ -918,7 +968,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                 <li>Open <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "#0284c7", fontWeight: 600 }}>aistudio.google.com/app/apikey</a></li>
                 <li>Find a key listed under <strong>"API Keys"</strong></li>
                 <li>Click <strong>"Copy key"</strong> button or the 📋 copy icon next to the key</li>
-                <li>Paste below — both <code style={{ background: "#e0f2fe", padding: "1px 4px", borderRadius: "4px" }}>AIzaSy...</code> and <code style={{ background: "#e0f2fe", padding: "1px 4px", borderRadius: "4px" }}>AQ.Ab8...</code> formats are supported</li>
+                <li>Paste the API key below. A valid Gemini REST API key starts with <code style={{ background: "#e0f2fe", padding: "1px 4px", borderRadius: "4px" }}>AIzaSy...</code></li>
               </ol>
             </div>
 
@@ -930,7 +980,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                 <input
                   name="user_gemini_key"
                   type="text"
-                  placeholder="Paste your Gemini API key (AIzaSy... or AQ.Ab8...)"
+                  placeholder="Paste your Gemini API key (AIzaSy...)"
                   defaultValue={userGeminiKey}
                   required
                   style={{
@@ -945,7 +995,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                   }}
                 />
                 <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
-                  Accepted formats: <code>AIzaSyABC123...</code> or <code>AQ.Ab8RN6...</code>
+                  Accepted format: <code>AIzaSyABC123...</code>
                 </div>
               </div>
 
