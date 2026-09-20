@@ -177,11 +177,25 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
         responseOk = true;
         resData = data;
       } else if (error) {
-        resData = { error: error.message };
+        const context = (error as any).context;
+        if (context && typeof context.text === "function") {
+          const edgeText = await context.text();
+          try {
+            resData = edgeText ? JSON.parse(edgeText) : { error: error.message };
+          } catch {
+            resData = { error: edgeText || error.message };
+          }
+        } else {
+          resData = { error: error.message };
+        }
       }
     }
 
-    if (!responseOk) {
+    const shouldUseNetlifyFallback =
+      !responseOk &&
+      (!resData.error || /failed to fetch|function not found|not found|network/i.test(String(resData.error)));
+
+    if (shouldUseNetlifyFallback) {
       const response = await fetch("/api/extract-purchase-bill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

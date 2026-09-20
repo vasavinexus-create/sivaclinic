@@ -70,11 +70,14 @@ Deno.serve(async (request) => {
     let selectedModel = String(gemini_model || "").trim() || DEFAULT_GEMINI_MODEL;
 
     if ((!apiKey || !gemini_model) && supabase) {
-      const { data: orgData } = await supabase
+      const { data: orgData, error: orgError } = await supabase
         .from("organizations")
         .select("gemini_api_key,gemini_model")
         .eq("id", organization_id)
         .single();
+      if (orgError) {
+        throw new Error(`Supabase organization settings lookup failed: ${orgError.message}. Run the database migrations on the Supabase project used by this app.`);
+      }
       if (!apiKey) apiKey = orgData?.gemini_api_key?.trim() || "";
       if (!gemini_model && orgData?.gemini_model) selectedModel = orgData.gemini_model.trim();
     }
@@ -84,7 +87,13 @@ Deno.serve(async (request) => {
     }
 
     if ((user_api_key || gemini_model) && supabase) {
-      await supabase.from("organizations").update({ gemini_api_key: apiKey, gemini_model: selectedModel }).eq("id", organization_id);
+      const { error: updateError } = await supabase
+        .from("organizations")
+        .update({ gemini_api_key: apiKey, gemini_model: selectedModel })
+        .eq("id", organization_id);
+      if (updateError) {
+        throw new Error(`Supabase organization settings update failed: ${updateError.message}. Run the Gemini model settings migration.`);
+      }
     }
 
     const controller = new AbortController();
