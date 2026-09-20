@@ -11,11 +11,13 @@ export async function GET(request: Request) {
   const trimmedKey = key.trim();
 
   // Test: List models (lightweight, no token cost)
-  const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(trimmedKey)}&pageSize=3`;
+  const listUrl = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=3";
   let listStatus = 0;
   let listBody = "";
   try {
-    const res = await fetch(listUrl);
+    const res = await fetch(listUrl, {
+      headers: { "x-goog-api-key": trimmedKey }
+    });
     listStatus = res.status;
     listBody = await res.text();
   } catch (e: any) {

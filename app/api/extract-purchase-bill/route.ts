@@ -294,11 +294,11 @@ export async function POST(request: Request) {
 
     for (const model of modelsToTry) {
       try {
-        const urlWithKey = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
-          "x-goog-api-key": apiKey   // secondary auth header Google also accepts
+          "x-goog-api-key": apiKey
         };
 
         const payload = {
@@ -327,7 +327,7 @@ export async function POST(request: Request) {
           }
         };
 
-        const res = await geminiRequest(urlWithKey, headers, JSON.stringify(payload));
+        const res = await geminiRequest(geminiUrl, headers, JSON.stringify(payload));
         const resText = res.text();
 
         if (res.status >= 200 && res.status < 300) {
@@ -355,9 +355,11 @@ export async function POST(request: Request) {
           console.error(`Gemini API call (${model}) failed with status ${res.status}:`, resText);
           try {
             const parsedErr = JSON.parse(resText);
-            lastErrorMsg = parsedErr?.error?.message || resText.slice(0, 300);
+            const googleMessage = parsedErr?.error?.message || resText.slice(0, 300);
+            const googleStatus = parsedErr?.error?.status || `HTTP_${res.status}`;
+            lastErrorMsg = `Google Gemini rejected the request (${model}, ${googleStatus}): ${googleMessage}`;
           } catch {
-            lastErrorMsg = resText.slice(0, 300);
+            lastErrorMsg = `Google Gemini rejected the request (${model}, HTTP_${res.status}): ${resText.slice(0, 300)}`;
           }
         }
       } catch (fetchErr: any) {
