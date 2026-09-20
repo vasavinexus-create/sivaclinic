@@ -139,30 +139,47 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
   const callExtractionApi = async (base64Content: string, mimeType: string, customApiKey?: string) => {
     setUploadProgress("Analyzing invoice structure with Gemini AI...");
 
-    const response = await fetch("/api/extract-purchase-bill", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        file_base64: base64Content,
-        mime_type: mimeType,
-        organization_id: profile.organization_id,
-        user_api_key: customApiKey || userGeminiKey || undefined
-      })
-    });
+    const payload = {
+      file_base64: base64Content,
+      mime_type: mimeType,
+      organization_id: profile.organization_id,
+      user_api_key: customApiKey || userGeminiKey || undefined
+    };
 
-    const responseText = await response.text();
+    let responseOk = false;
     let resData: any = {};
-    try {
-      resData = responseText ? JSON.parse(responseText) : {};
-    } catch {
-      resData = {
-        error: response.status === 504
-          ? "The invoice extraction timed out on the server. Try uploading a smaller/clearer single-page bill image or PDF."
-          : `Server returned a non-JSON error (${response.status}). Please try again.`
-      };
+
+    if (supabase) {
+      const { data, error } = await supabase.functions.invoke("extract-purchase-bill", { body: payload });
+      if (!error && data) {
+        responseOk = true;
+        resData = data;
+      } else if (error) {
+        resData = { error: error.message };
+      }
     }
 
-    if (!response.ok || !resData.success) {
+    if (!responseOk) {
+      const response = await fetch("/api/extract-purchase-bill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      responseOk = response.ok;
+      const responseText = await response.text();
+      try {
+        resData = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        resData = {
+          error: response.status === 504
+            ? "The invoice extraction timed out on the server. Try uploading a smaller/clearer single-page bill image or PDF."
+            : `Server returned a non-JSON error (${response.status}). Please try again.`
+        };
+      }
+    }
+
+    if (!responseOk || !resData.success) {
       const errMsg = resData.error || "Failed to extract invoice via Gemini API";
       setPendingBase64({ base64: base64Content, mimeType });
       setApiKeyError(errMsg);

@@ -42,6 +42,7 @@
     "db",
     "drizzle",
     "examples",
+    "supabase/functions",
     "worker",
     "dist"
   ]

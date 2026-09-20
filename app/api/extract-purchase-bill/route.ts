@@ -36,7 +36,7 @@ function geminiRequest(url: string, headers: Record<string, string>, body: strin
     });
 
     req.on("error", reject);
-    req.setTimeout(22000, () => { req.destroy(new Error("Gemini API request timed out after 22s. Try a smaller image/PDF or a clearer single-page bill.")); });
+    req.setTimeout(24000, () => { req.destroy(new Error("Gemini API request timed out after 24s. Try a smaller image/PDF or a clearer single-page bill.")); });
     req.write(body);
     req.end();
   });
@@ -286,7 +286,7 @@ export async function POST(request: Request) {
       } catch {}
     }
 
-    const modelsToTry = ["gemini-2.5-flash"];
+    const modelsToTry = ["gemini-2.5-flash-lite"];
     let geminiResponseJson: any = null;
     let usedModel = "";
     let lastErrorMsg = "";
