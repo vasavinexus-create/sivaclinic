@@ -9,8 +9,6 @@ export async function GET(request: Request) {
   }
 
   const trimmedKey = key.trim();
-  const looksLikeGeminiKey = trimmedKey.startsWith("AIzaSy");
-  const looksLikeOAuthToken = trimmedKey.startsWith("AQ.");
 
   // Test: List models (lightweight, no token cost)
   const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(trimmedKey)}&pageSize=3`;
@@ -30,13 +28,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     key_prefix: trimmedKey.slice(0, 10) + "...",
     key_length: trimmedKey.length,
-    looks_like_gemini_rest_key: looksLikeGeminiKey,
-    looks_like_oauth_token: looksLikeOAuthToken,
-    format_warning: looksLikeOAuthToken
-      ? "This key starts with AQ. - this is a Google OAuth credential token, NOT a Gemini REST API key. Gemini REST API keys always start with AIzaSy. Go to https://aistudio.google.com/app/apikey, click the COPY icon next to an API Key row, and paste that value."
-      : looksLikeGeminiKey
-      ? "Key format looks correct (starts with AIzaSy)"
-      : "Unrecognized key format - expected to start with AIzaSy",
+    format_note: "No local prefix check is applied. The Google API response below is the source of truth for whether the key is valid.",
     google_api_response_status: listStatus,
     google_api_error: parsedError?.error || null,
     google_api_raw_body: listBody.slice(0, 1000)

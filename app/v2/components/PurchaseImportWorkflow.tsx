@@ -288,11 +288,6 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       return;
     }
 
-    if (!keyFromForm.startsWith("AIzaSy")) {
-      notify("Invalid key format. Copy a Gemini API key from Google AI Studio; it should start with AIzaSy.");
-      return;
-    }
-
     setUserGeminiKey(keyFromForm);
     setShowApiKeyModal(false);
 
@@ -968,7 +963,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                 <li>Open <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "#0284c7", fontWeight: 600 }}>aistudio.google.com/app/apikey</a></li>
                 <li>Find a key listed under <strong>"API Keys"</strong></li>
                 <li>Click <strong>"Copy key"</strong> button or the 📋 copy icon next to the key</li>
-                <li>Paste the API key below. A valid Gemini REST API key starts with <code style={{ background: "#e0f2fe", padding: "1px 4px", borderRadius: "4px" }}>AIzaSy...</code></li>
+                <li>Paste the copied key below. The app will send it to Google Gemini and show Google&apos;s response if the key is invalid.</li>
               </ol>
             </div>
 
@@ -980,7 +975,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                 <input
                   name="user_gemini_key"
                   type="text"
-                  placeholder="Paste your Gemini API key (AIzaSy...)"
+                  placeholder="Paste your Gemini API key"
                   defaultValue={userGeminiKey}
                   required
                   style={{
@@ -995,7 +990,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                   }}
                 />
                 <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
-                  Accepted format: <code>AIzaSyABC123...</code>
+                  Use the full key exactly as copied from Google AI Studio.
                 </div>
               </div>
 
