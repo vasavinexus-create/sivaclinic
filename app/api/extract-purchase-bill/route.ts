@@ -245,7 +245,7 @@ const JSON_SCHEMA = {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { file_base64, mime_type, organization_id, import_id, user_api_key } = body;
+    const { file_base64, mime_type, organization_id, import_id, user_api_key, gemini_model } = body;
 
     if (!file_base64 || !organization_id) {
       return NextResponse.json({ error: "Missing file_base64 or organization_id" }, { status: 400 });
@@ -257,16 +257,20 @@ export async function POST(request: Request) {
 
     // Fetch Gemini API Key from payload, organization, or environment
     let apiKey = user_api_key?.trim() || process.env.GEMINI_API_KEY?.trim();
+    let selectedModel = String(gemini_model || "").trim() || process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
 
-    if (!apiKey) {
+    if (!apiKey || !gemini_model) {
       const { data: orgData } = await supabase
         .from("organizations")
-        .select("gemini_api_key")
+        .select("gemini_api_key,gemini_model")
         .eq("id", organization_id)
         .single();
 
-      if (orgData?.gemini_api_key) {
+      if (!apiKey && orgData?.gemini_api_key) {
         apiKey = orgData.gemini_api_key.trim();
+      }
+      if (!gemini_model && orgData?.gemini_model) {
+        selectedModel = orgData.gemini_model.trim();
       }
     }
 
@@ -277,16 +281,16 @@ export async function POST(request: Request) {
     }
 
     // Save key to organization table for future use
-    if (user_api_key) {
+    if (user_api_key || gemini_model) {
       try {
         await supabase
           .from("organizations")
-          .update({ gemini_api_key: apiKey })
+          .update({ gemini_api_key: apiKey, gemini_model: selectedModel })
           .eq("id", organization_id);
       } catch {}
     }
 
-    const modelsToTry = ["gemini-2.5-flash"];
+    const modelsToTry = [selectedModel];
     let geminiResponseJson: any = null;
     let usedModel = "";
     let lastErrorMsg = "";

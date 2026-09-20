@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.5-flash";
+const DEFAULT_GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-3.6-flash";
 
 const GEMINI_SYSTEM_INSTRUCTION = `You are an invoice data extraction engine for an Indian purchase and inventory application.
 
@@ -56,7 +56,7 @@ Deno.serve(async (request) => {
 
   try {
     const body = await request.json();
-    const { file_base64, mime_type, organization_id, import_id, user_api_key } = body;
+    const { file_base64, mime_type, organization_id, import_id, user_api_key, gemini_model } = body;
 
     if (!file_base64 || !organization_id) {
       return jsonResponse({ error: "Missing file_base64 or organization_id" }, 400);
@@ -67,28 +67,30 @@ Deno.serve(async (request) => {
     const supabase = supabaseUrl && serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey) : null;
 
     let apiKey = String(user_api_key || "").trim() || Deno.env.get("GEMINI_API_KEY")?.trim() || "";
+    let selectedModel = String(gemini_model || "").trim() || DEFAULT_GEMINI_MODEL;
 
-    if (!apiKey && supabase) {
+    if ((!apiKey || !gemini_model) && supabase) {
       const { data: orgData } = await supabase
         .from("organizations")
-        .select("gemini_api_key")
+        .select("gemini_api_key,gemini_model")
         .eq("id", organization_id)
         .single();
-      apiKey = orgData?.gemini_api_key?.trim() || "";
+      if (!apiKey) apiKey = orgData?.gemini_api_key?.trim() || "";
+      if (!gemini_model && orgData?.gemini_model) selectedModel = orgData.gemini_model.trim();
     }
 
     if (!apiKey) {
       return jsonResponse({ error: "Gemini API key is missing. Please enter your Google Gemini API key." }, 400);
     }
 
-    if (user_api_key && supabase) {
-      await supabase.from("organizations").update({ gemini_api_key: apiKey }).eq("id", organization_id);
+    if ((user_api_key || gemini_model) && supabase) {
+      await supabase.from("organizations").update({ gemini_api_key: apiKey, gemini_model: selectedModel }).eq("id", organization_id);
     }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort("Gemini extraction timed out after 110s"), 110_000);
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent`;
     const payload = {
       systemInstruction: { parts: [{ text: GEMINI_SYSTEM_INSTRUCTION }] },
       contents: [{
@@ -126,7 +128,7 @@ Deno.serve(async (request) => {
         } catch {
           // Keep raw response snippet.
         }
-        throw new Error(`Google Gemini rejected the request (${GEMINI_MODEL}, ${googleStatus}): ${googleMessage}`);
+        throw new Error(`Google Gemini rejected the request (${selectedModel}, ${googleStatus}): ${googleMessage}`);
       }
 
       const jsonRes = JSON.parse(resText);
@@ -171,12 +173,12 @@ Deno.serve(async (request) => {
         organization_id,
         purchase_import_id: import_id || null,
         raw_json: geminiResponseJson,
-        model_name: GEMINI_MODEL,
+        model_name: selectedModel,
         extraction_success: true,
       });
     }
 
-    return jsonResponse({ success: true, extraction: geminiResponseJson, model: GEMINI_MODEL });
+    return jsonResponse({ success: true, extraction: geminiResponseJson, model: selectedModel });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
     return jsonResponse({ error: message }, 400);

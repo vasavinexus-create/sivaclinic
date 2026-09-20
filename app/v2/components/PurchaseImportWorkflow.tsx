@@ -12,6 +12,12 @@ import { postJournal } from "../lib/accounting";
 import { Profile, Row } from "../lib/types";
 import { Field } from "./controls";
 
+const GEMINI_MODEL_OPTIONS = [
+  { value: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  { value: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" }
+];
+
 export interface StagingItem {
   id?: string;
   line_no: number;
@@ -59,7 +65,9 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
   // API Key modal prompt state
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [userGeminiKey, setUserGeminiKey] = useState("");
+  const [geminiModel, setGeminiModel] = useState("gemini-3.6-flash");
   const [apiKeyError, setApiKeyError] = useState("");
+  const [extractionError, setExtractionError] = useState("");
   const [pendingBase64, setPendingBase64] = useState<{ base64: string; mimeType: string } | null>(null);
 
   // Extracted Invoice & Staging Header
@@ -100,6 +108,18 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
 
   useEffect(() => { loadMasterData(); }, [profile.organization_id]);
 
+  useEffect(() => {
+    if (!supabase) return;
+    supabase
+      .from("organizations")
+      .select("gemini_model")
+      .eq("id", profile.organization_id)
+      .single()
+      .then(({ data }) => {
+        if (data?.gemini_model) setGeminiModel(data.gemini_model);
+      });
+  }, [profile.organization_id]);
+
   // Load saved description mappings when supplier changes
   useEffect(() => {
     if (!supabase || !supplierId) {
@@ -138,11 +158,13 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
   // Execute extraction API call
   const callExtractionApi = async (base64Content: string, mimeType: string, customApiKey?: string) => {
     setUploadProgress("Analyzing invoice structure with Gemini AI...");
+    setExtractionError("");
 
     const payload = {
       file_base64: base64Content,
       mime_type: mimeType,
       organization_id: profile.organization_id,
+      gemini_model: geminiModel,
       user_api_key: customApiKey || userGeminiKey || undefined
     };
 
@@ -182,14 +204,21 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
     if (!responseOk || !resData.success) {
       const errMsg = resData.error || "Failed to extract invoice via Gemini API";
       setPendingBase64({ base64: base64Content, mimeType });
-      setApiKeyError(errMsg);
-      setShowApiKeyModal(true);
+      if (/api key is missing|enter your google gemini api key/i.test(errMsg)) {
+        setApiKeyError(errMsg);
+        setShowApiKeyModal(true);
+      } else {
+        setApiKeyError("");
+        setExtractionError(errMsg);
+        setShowApiKeyModal(false);
+      }
       setStep("upload");
       notify(errMsg);
       return;
     }
 
     setApiKeyError("");
+    setExtractionError("");
     const ext = resData.extraction;
     setUploadProgress("Mapping products & calculating invoice totals...");
 
@@ -278,6 +307,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
     setFile(selectedFile);
     setStep("extracting");
     setUploadProgress("Uploading file to secure storage...");
+    setExtractionError("");
 
     try {
       // 1. Safe Upload to Supabase Storage if image file
@@ -735,10 +765,33 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
               Support for single/multi-page PDF, JPG, or PNG files. Gemini AI will extract invoice totals, batch info, and item lines securely.
             </p>
 
+            <label className="field" style={{ width: "100%", maxWidth: "360px", marginTop: "12px", textAlign: "left" }}>
+              <span>Gemini model</span>
+              <select value={geminiModel} onChange={(event) => setGeminiModel(event.currentTarget.value)}>
+                {GEMINI_MODEL_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+
             <label className="primary" style={{ cursor: "pointer", marginTop: "16px" }}>
               <FileText size={18} /> Select Bill File (PDF / JPG / PNG)
               <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={handleFileUpload} style={{ display: "none" }} />
             </label>
+
+            {extractionError && (
+              <div style={{ width: "100%", maxWidth: "620px", marginTop: "16px", background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: "8px", padding: "12px 14px", textAlign: "left", fontSize: "12px", lineHeight: 1.5 }}>
+                <strong style={{ display: "block", marginBottom: "6px" }}>Gemini extraction failed</strong>
+                {extractionError}
+                {pendingBase64 && (
+                  <div style={{ marginTop: "10px" }}>
+                    <button className="secondary" onClick={() => { setStep("extracting"); callExtractionApi(pendingBase64.base64, pendingBase64.mimeType); }}>
+                      Retry with selected model
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1019,6 +1072,31 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                 <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
                   Use the full key exactly as copied from Google AI Studio.
                 </div>
+              </div>
+
+              <div className="field" style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px", color: "#1e293b" }}>
+                  Gemini model
+                </label>
+                <select
+                  name="gemini_model"
+                  value={geminiModel}
+                  onChange={(event) => setGeminiModel(event.currentTarget.value)}
+                  style={{
+                    width: "100%",
+                    height: "44px",
+                    padding: "0 12px",
+                    borderRadius: "8px",
+                    border: "1px solid var(--line)",
+                    fontSize: "14px",
+                    background: "#ffffff",
+                    color: "#0f172a"
+                  }}
+                >
+                  {GEMINI_MODEL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px" }}>
