@@ -294,20 +294,14 @@ export async function POST(request: Request) {
 
     for (const model of modelsToTry) {
       try {
-        // AIzaSy = standard Gemini REST API key → send as ?key= query param
-        // AQ.    = Google OAuth access token → send as Bearer token (but these expire hourly — use AIzaSy instead)
-        const isOAuthToken = apiKey.startsWith("AQ.");
-        const url = isOAuthToken
-          ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
-          : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        // Both AIzaSy (standard) and AQ. (auth keys since May 2026) use ?key= query param
+        // Auth keys are bound to a service account but still sent the same way as API keys
+        const urlWithKey = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (isOAuthToken) {
-          headers["Authorization"] = `Bearer ${apiKey}`;
-        } else {
-          // Also send as header for extra compatibility
-          headers["x-goog-api-key"] = apiKey;
-        }
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey   // secondary auth header Google also accepts
+        };
 
         const payload = {
           systemInstruction: {
@@ -335,7 +329,7 @@ export async function POST(request: Request) {
           }
         };
 
-        const res = await geminiRequest(url, headers, JSON.stringify(payload));
+        const res = await geminiRequest(urlWithKey, headers, JSON.stringify(payload));
         const resText = res.text();
 
         if (res.status >= 200 && res.status < 300) {
