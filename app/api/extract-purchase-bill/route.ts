@@ -294,16 +294,19 @@ export async function POST(request: Request) {
 
     for (const model of modelsToTry) {
       try {
-        // AQ. = Google OAuth Auth Key → send as Bearer token
-        // AIzaSy = standard REST API key → send as ?key= query param
-        const isAuthKey = apiKey.startsWith("AQ.");
-        const url = isAuthKey
+        // AIzaSy = standard Gemini REST API key → send as ?key= query param
+        // AQ.    = Google OAuth access token → send as Bearer token (but these expire hourly — use AIzaSy instead)
+        const isOAuthToken = apiKey.startsWith("AQ.");
+        const url = isOAuthToken
           ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`
           : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
         const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (isAuthKey) {
+        if (isOAuthToken) {
           headers["Authorization"] = `Bearer ${apiKey}`;
+        } else {
+          // Also send as header for extra compatibility
+          headers["x-goog-api-key"] = apiKey;
         }
 
         const payload = {
