@@ -260,17 +260,25 @@ export async function POST(request: Request) {
     let selectedModel = String(gemini_model || "").trim() || process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
 
     if (!apiKey || !gemini_model) {
-      const { data: orgData } = await supabase
+      const { data: orgData, error: orgError } = await supabase
         .from("organizations")
         .select("gemini_api_key,gemini_model")
         .eq("id", organization_id)
         .single();
 
-      if (!apiKey && orgData?.gemini_api_key) {
-        apiKey = orgData.gemini_api_key.trim();
+      if (orgError && !apiKey) {
+        return NextResponse.json({
+          error: `Supabase organization settings lookup failed: ${orgError.message}. Run the database migrations on the Supabase project used by this app.`
+        }, { status: 400 });
       }
-      if (!gemini_model && orgData?.gemini_model) {
-        selectedModel = orgData.gemini_model.trim();
+
+      if (!orgError) {
+        if (!apiKey && orgData?.gemini_api_key) {
+          apiKey = orgData.gemini_api_key.trim();
+        }
+        if (!gemini_model && orgData?.gemini_model) {
+          selectedModel = orgData.gemini_model.trim();
+        }
       }
     }
 

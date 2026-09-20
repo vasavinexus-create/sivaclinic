@@ -75,11 +75,13 @@ Deno.serve(async (request) => {
         .select("gemini_api_key,gemini_model")
         .eq("id", organization_id)
         .single();
-      if (orgError) {
+      if (orgError && !apiKey) {
         throw new Error(`Supabase organization settings lookup failed: ${orgError.message}. Run the database migrations on the Supabase project used by this app.`);
       }
-      if (!apiKey) apiKey = orgData?.gemini_api_key?.trim() || "";
-      if (!gemini_model && orgData?.gemini_model) selectedModel = orgData.gemini_model.trim();
+      if (!orgError) {
+        if (!apiKey) apiKey = orgData?.gemini_api_key?.trim() || "";
+        if (!gemini_model && orgData?.gemini_model) selectedModel = orgData.gemini_model.trim();
+      }
     }
 
     if (!apiKey) {
@@ -91,7 +93,7 @@ Deno.serve(async (request) => {
         .from("organizations")
         .update({ gemini_api_key: apiKey, gemini_model: selectedModel })
         .eq("id", organization_id);
-      if (updateError) {
+      if (updateError && updateError.code !== "42P01" && updateError.code !== "42703") {
         throw new Error(`Supabase organization settings update failed: ${updateError.message}. Run the Gemini model settings migration.`);
       }
     }
