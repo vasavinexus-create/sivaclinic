@@ -36,7 +36,7 @@ function geminiRequest(url: string, headers: Record<string, string>, body: strin
     });
 
     req.on("error", reject);
-    req.setTimeout(60000, () => { req.destroy(new Error("Gemini API request timed out after 60s")); });
+    req.setTimeout(22000, () => { req.destroy(new Error("Gemini API request timed out after 22s. Try a smaller image/PDF or a clearer single-page bill.")); });
     req.write(body);
     req.end();
   });

@@ -150,7 +150,17 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       })
     });
 
-    const resData = await response.json();
+    const responseText = await response.text();
+    let resData: any = {};
+    try {
+      resData = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      resData = {
+        error: response.status === 504
+          ? "The invoice extraction timed out on the server. Try uploading a smaller/clearer single-page bill image or PDF."
+          : `Server returned a non-JSON error (${response.status}). Please try again.`
+      };
+    }
 
     if (!response.ok || !resData.success) {
       const errMsg = resData.error || "Failed to extract invoice via Gemini API";
