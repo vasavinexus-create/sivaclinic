@@ -286,8 +286,7 @@ export async function POST(request: Request) {
       } catch {}
     }
 
-    // Models to try in order of capability
-    const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash"];
+    const modelsToTry = ["gemini-2.5-flash"];
     let geminiResponseJson: any = null;
     let usedModel = "";
     let lastErrorMsg = "";
