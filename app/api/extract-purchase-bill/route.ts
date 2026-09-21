@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import https from "https";
+import { validateInvoiceFile, parseInvoiceResponse, geminiFailure } from "@/supabase/functions/_shared/purchase-extraction.mjs";
 
-// Custom HTTPS agent that bypasses SSL cert verification issues (corporate proxy / self-signed certs)
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+// Use the system trust chain when sending API credentials and invoice data.
+const httpsAgent = new https.Agent();
 
 /**
  * Makes a POST request to the Gemini API using Node.js https module directly.
- * This avoids the native fetch SSL verification failures that occur on some Windows machines.
+ * Bounds request time while preserving TLS certificate verification.
  */
 function geminiRequest(url: string, headers: Record<string, string>, body: string): Promise<{ status: number; text: () => string }> {
   return new Promise((resolve, reject) => {
@@ -242,6 +243,15 @@ const JSON_SCHEMA = {
   }
 };
 
+function allowMissingValues(schema: any): any {
+  return {
+    ...schema,
+    nullable: true,
+    ...(schema.properties ? { properties: Object.fromEntries(Object.entries(schema.properties).map(([key, value]) => [key, allowMissingValues(value)])) } : {}),
+    ...(schema.items ? { items: allowMissingValues(schema.items) } : {}),
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -250,6 +260,9 @@ export async function POST(request: Request) {
     if (!file_base64 || !organization_id) {
       return NextResponse.json({ error: "Missing file_base64 or organization_id" }, { status: 400 });
     }
+    let invoiceMime: string;
+    try { invoiceMime = validateInvoiceFile(file_base64, mime_type); }
+    catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }); }
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -263,13 +276,13 @@ export async function POST(request: Request) {
     if (!apiKey || !gemini_model) {
       const { data: orgData, error: orgError } = await supabase
         .from("organizations")
-        .select("gemini_api_key,gemini_model")
+        .select("gemini_api_key")
         .eq("id", organization_id)
         .single();
 
       if (orgError && !apiKey) {
         return NextResponse.json({
-          error: "Gemini API key is missing. Please enter your Google Gemini API Key."
+          error: "Could not read the saved Gemini API key. Check clinic access and the Gemini settings migration, or enter your Google Gemini API key to continue."
         }, { status: 400 });
       }
 
@@ -277,10 +290,11 @@ export async function POST(request: Request) {
         if (!apiKey && orgData?.gemini_api_key) {
           apiKey = orgData.gemini_api_key.trim();
         }
-        if (!gemini_model && orgData?.gemini_model) {
-          selectedModel = orgData.gemini_model.trim();
-        }
       }
+    }
+    if (!gemini_model) {
+      const { data } = await supabase.from("organizations").select("gemini_model").eq("id", organization_id).maybeSingle();
+      if (data?.gemini_model) selectedModel = data.gemini_model.trim();
     }
 
     if (!apiKey) {
@@ -303,6 +317,7 @@ export async function POST(request: Request) {
     let geminiResponseJson: any = null;
     let usedModel = "";
     let lastErrorMsg = "";
+    let failureStatus = 502;
 
     for (const model of modelsToTry) {
       try {
@@ -322,7 +337,7 @@ export async function POST(request: Request) {
               parts: [
                 {
                   inlineData: {
-                    mimeType: mime_type || "application/pdf",
+                    mimeType: invoiceMime,
                     data: file_base64
                   }
                 },
@@ -334,7 +349,7 @@ export async function POST(request: Request) {
           ],
           generationConfig: {
             responseMimeType: "application/json",
-            responseSchema: JSON_SCHEMA,
+            responseSchema: allowMissingValues(JSON_SCHEMA),
             temperature: 0.1
           }
         };
@@ -345,38 +360,21 @@ export async function POST(request: Request) {
         if (res.status >= 200 && res.status < 300) {
           let jsonRes: any;
           try { jsonRes = JSON.parse(resText); } catch { lastErrorMsg = "Failed to parse Gemini response JSON"; continue; }
-          // When using responseMimeType=application/json, content is in parts[0].text
-          const textContent = jsonRes?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (textContent) {
-            try {
-              geminiResponseJson = JSON.parse(textContent);
-              usedModel = model;
-              break;
-            } catch (e: any) {
-              lastErrorMsg = "Failed to parse JSON output: " + e.message;
-            }
-          } else if (jsonRes?.candidates?.[0]?.content?.parts?.[0]) {
-            // Some responses return JSON directly in parts (no text wrapping)
-            geminiResponseJson = jsonRes.candidates[0].content.parts[0];
-            usedModel = model;
-            break;
-          } else {
-            lastErrorMsg = "Gemini returned no usable content";
-          }
-        } else {
-          console.error(`Gemini API call (${model}) failed with status ${res.status}:`, resText);
           try {
-            const parsedErr = JSON.parse(resText);
-            const googleMessage = parsedErr?.error?.message || resText.slice(0, 300);
-            const googleStatus = parsedErr?.error?.status || `HTTP_${res.status}`;
-            lastErrorMsg = `Google Gemini rejected the request (${model}, ${googleStatus}): ${googleMessage}`;
-          } catch {
-            lastErrorMsg = `Google Gemini rejected the request (${model}, HTTP_${res.status}): ${resText.slice(0, 300)}`;
-          }
+            geminiResponseJson = parseInvoiceResponse(jsonRes);
+            usedModel = model;
+          } catch (error) { lastErrorMsg = (error as Error).message; }
+          break;
+        } else {
+          const failure = geminiFailure(res.status, resText, model);
+          lastErrorMsg = failure.message;
+          failureStatus = failure.status;
+          if (!failure.retryModel) break;
         }
       } catch (fetchErr: any) {
         console.error(`HTTPS request exception for ${model}:`, fetchErr);
         lastErrorMsg = `Connection to Gemini API failed (${model}): ${fetchErr.message || fetchErr}`;
+        break;
       }
     }
 
@@ -393,11 +391,11 @@ export async function POST(request: Request) {
         });
       } catch {}
 
-      return NextResponse.json({ error: lastErrorMsg || "Failed to extract invoice data using Gemini API" }, { status: 400 });
+      return NextResponse.json({ error: lastErrorMsg || "Failed to extract invoice data using Gemini API" }, { status: failureStatus });
     }
 
     // Server-side calculation & sanity validation checks
-    const warnings: string[] = geminiResponseJson.validation?.warnings || [];
+    const warnings: string[] = Array.isArray(geminiResponseJson.validation?.warnings) ? geminiResponseJson.validation.warnings : [];
     const items = geminiResponseJson.items || [];
     const totals = geminiResponseJson.totals || {};
 

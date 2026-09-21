@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.112.3";
+import { validateInvoiceFile, parseInvoiceResponse, geminiFailure } from "../_shared/purchase-extraction.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,11 +45,6 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
   });
 }
 
-function parseJsonFromGemini(text: string) {
-  const trimmed = text.trim().replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/i, "").trim();
-  return JSON.parse(trimmed);
-}
-
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -61,6 +57,7 @@ Deno.serve(async (request) => {
     if (!file_base64 || !organization_id) {
       return jsonResponse({ error: "Missing file_base64 or organization_id" }, 400);
     }
+    const invoiceMime = validateInvoiceFile(file_base64, mime_type);
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -72,16 +69,19 @@ Deno.serve(async (request) => {
     if ((!apiKey || !gemini_model) && supabase) {
       const { data: orgData, error: orgError } = await supabase
         .from("organizations")
-        .select("gemini_api_key,gemini_model")
+        .select("gemini_api_key")
         .eq("id", organization_id)
         .single();
       if (orgError && !apiKey) {
-        return jsonResponse({ error: "Gemini API key is missing. Please enter your Google Gemini API key." }, 400);
+        return jsonResponse({ error: "Could not read the saved Gemini API key. Check clinic access and the Gemini settings migration, or enter your Google Gemini API key to continue." }, 400);
       }
       if (!orgError) {
         if (!apiKey) apiKey = orgData?.gemini_api_key?.trim() || "";
-        if (!gemini_model && orgData?.gemini_model) selectedModel = orgData.gemini_model.trim();
       }
+    }
+    if (!gemini_model && supabase) {
+      const { data } = await supabase.from("organizations").select("gemini_model").eq("id", organization_id).maybeSingle();
+      if (data?.gemini_model) selectedModel = data.gemini_model.trim();
     }
 
     if (!apiKey) {
@@ -93,14 +93,14 @@ Deno.serve(async (request) => {
         .from("organizations")
         .update({ gemini_api_key: apiKey, gemini_model: selectedModel })
         .eq("id", organization_id);
-      if (updateError && updateError.code !== "42P01" && updateError.code !== "42703") {
-        throw new Error(`Supabase organization settings update failed: ${updateError.message}. Run the Gemini model settings migration.`);
-      }
+      // A settings persistence failure must not prevent extraction with the supplied key.
+      if (updateError) console.warn("Gemini settings could not be saved", updateError.code);
     }
 
     let geminiResponseJson: Record<string, any> | null = null;
     let usedModel = "";
     let lastGeminiError = "";
+    let failureStatus = 502;
     const modelsToTry = Array.from(new Set([selectedModel, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"].filter(Boolean)));
 
     for (const model of modelsToTry) {
@@ -112,7 +112,7 @@ Deno.serve(async (request) => {
           systemInstruction: { parts: [{ text: GEMINI_SYSTEM_INSTRUCTION }] },
           contents: [{
             parts: [
-              { inlineData: { mimeType: mime_type || "application/pdf", data: file_base64 } },
+              { inlineData: { mimeType: invoiceMime, data: file_base64 } },
               { text: "Extract all purchase invoice data as JSON. Return JSON only." },
             ],
           }],
@@ -134,27 +134,21 @@ Deno.serve(async (request) => {
 
         const resText = await geminiRes.text();
         if (!geminiRes.ok) {
-          let googleMessage = resText.slice(0, 500);
-          let googleStatus = `HTTP_${geminiRes.status}`;
-          try {
-            const parsed = JSON.parse(resText);
-            googleMessage = parsed?.error?.message || googleMessage;
-            googleStatus = parsed?.error?.status || googleStatus;
-          } catch {
-            // Keep raw response snippet.
-          }
-          lastGeminiError = `Google Gemini rejected the request (${model}, ${googleStatus}): ${googleMessage}`;
+          const failure = geminiFailure(geminiRes.status, resText, model);
+          lastGeminiError = failure.message;
+          failureStatus = failure.status;
+          if (!failure.retryModel) break;
           continue;
         }
 
         const jsonRes = JSON.parse(resText);
-        const textContent = jsonRes?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!textContent) {
-          lastGeminiError = `Gemini returned no usable content (${model})`;
-          continue;
-        }
-        geminiResponseJson = parseJsonFromGemini(textContent);
+        geminiResponseJson = parseInvoiceResponse(jsonRes);
         usedModel = model;
+        break;
+      } catch (error) {
+        lastGeminiError = controller.signal.aborted
+          ? "Gemini extraction timed out. Please try a smaller invoice file."
+          : error instanceof Error ? error.message : "Could not connect to Gemini.";
         break;
       } finally {
         clearTimeout(timeout);
@@ -162,7 +156,7 @@ Deno.serve(async (request) => {
     }
 
     if (!geminiResponseJson) {
-      throw new Error(lastGeminiError || "Failed to extract invoice data using Gemini API");
+      return jsonResponse({ error: lastGeminiError || "Failed to extract invoice data using Gemini API" }, failureStatus);
     }
 
     const warnings: string[] = Array.isArray(geminiResponseJson.validation?.warnings)

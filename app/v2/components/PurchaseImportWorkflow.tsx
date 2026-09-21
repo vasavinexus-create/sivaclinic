@@ -160,6 +160,8 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
     setUploadProgress("Analyzing invoice structure with Gemini AI...");
     setExtractionError("");
 
+    setPendingBase64({ base64: base64Content, mimeType });
+    try {
     const payload = {
       file_base64: base64Content,
       mime_type: mimeType,
@@ -222,7 +224,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
     if (!responseOk || !resData.success) {
       const errMsg = resData.error || "Failed to extract invoice via Gemini API";
       setPendingBase64({ base64: base64Content, mimeType });
-      if (/api key is missing|enter your google gemini api key/i.test(errMsg)) {
+      if (/api key is missing|enter your google gemini api key|API key is invalid|API key not valid|API_KEY_INVALID|API key expired/i.test(errMsg)) {
         setApiKeyError(errMsg);
         setShowApiKeyModal(true);
       } else {
@@ -238,6 +240,9 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
     setApiKeyError("");
     setExtractionError("");
     const ext = resData.extraction;
+    if (!ext || !Array.isArray(ext.items) || ext.items.length === 0) {
+      throw new Error("No product rows were extracted. Please upload a clearer purchase invoice.");
+    }
     setUploadProgress("Mapping products & calculating invoice totals...");
 
     // Auto-identify Supplier by GSTIN
@@ -269,8 +274,8 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
 
       let expDate = "";
       const expM = raw.expiry_month ? String(raw.expiry_month).padStart(2, "0") : "12";
-      const expY = raw.expiry_year ? (String(raw.expiry_year).length === 2 ? `20${raw.expiry_year}` : raw.expiry_year) : "2028";
-      expDate = `${expY}-${expM}-28`;
+      const expY = raw.expiry_year ? (String(raw.expiry_year).length === 2 ? `20${raw.expiry_year}` : raw.expiry_year) : "";
+      expDate = expY && raw.expiry_month ? `${expY}-${expM}-${new Date(Number(expY), Number(expM), 0).getDate()}` : "";
 
       return {
         line_no: raw.line_no || index + 1,
@@ -282,7 +287,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
         pack: raw.pack || null,
         unit: raw.unit || null,
         hsn: raw.hsn || null,
-        batch_no: raw.batch_no || `BAT-${Date.now().toString().slice(-4)}-${index + 1}`,
+        batch_no: raw.batch_no || "",
         expiry_month: raw.expiry_month || null,
         expiry_year: raw.expiry_year || null,
         expiry_date: expDate,
@@ -303,12 +308,18 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
         mapped_product: null,
         mapping_source: "unmapped",
         mapping_status: "unmapped",
-        requires_review: false
+        requires_review: !raw.batch_no || !expDate
       };
     });
 
     runProductMapping(processedStagingItems, savedMappings, productsMaster);
     setStep("review");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to process the invoice. Please retry.";
+      setExtractionError(message);
+      setStep("upload");
+      notify(message);
+    }
   };
 
   // Handle File Upload and AI Extraction
@@ -319,6 +330,10 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
     const validTypes = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
     if (!validTypes.includes(selectedFile.type)) {
       notify("Please upload a valid PDF, JPG, or PNG invoice file.");
+      return;
+    }
+    if (selectedFile.size === 0 || selectedFile.size > 3 * 1024 * 1024) {
+      notify("Please upload a non-empty invoice file smaller than 3 MB.");
       return;
     }
 
@@ -340,14 +355,17 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
         }
       }
       // 2. Convert file to Base64 for Gemini API Route
-      const reader = new FileReader();
-      reader.readAsDataURL(selectedFile);
-      reader.onload = async () => {
-        const base64Content = (reader.result as string).split(",")[1];
-        await callExtractionApi(base64Content, selectedFile.type);
-      };
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error("Could not read the invoice file. Please select it again."));
+        reader.onabort = () => reject(new Error("Invoice file reading was cancelled."));
+        reader.readAsDataURL(selectedFile);
+      });
+      await callExtractionApi(dataUrl.split(",")[1], selectedFile.type);
     } catch (err: any) {
       setStep("upload");
+      setExtractionError(err.message || "Failed to process uploaded file");
       notify(err.message || "Failed to process uploaded file");
     }
   };
@@ -588,6 +606,10 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       return;
     }
     const unmappedItems = items.filter((i) => !i.mapped_product_id);
+    if (items.length === 0 || items.some((item) => !item.batch_no.trim() || !item.expiry_date)) {
+      notify("Enter the missing batch number and expiry date for every invoice row before approval.");
+      return;
+    }
     if (unmappedItems.length > 0) {
       notify(`Cannot approve: ${unmappedItems.length} items remain unmapped. Please map all products first.`);
       return;
@@ -948,8 +970,14 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                           </div>
                         </td>
                         <td>
-                          <strong>{item.batch_no}</strong>
-                          <div style={{ fontSize: "11px", color: "var(--muted)" }}>Exp: {item.expiry_date}</div>
+                          <input aria-label={`Batch number for row ${item.line_no}`} value={item.batch_no} placeholder="Batch number" style={{ width: "145px" }} onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            setItems((rows) => rows.map((row, index) => index === originalIndex ? { ...row, batch_no: value } : row));
+                          }}/>
+                          <input aria-label={`Expiry date for row ${item.line_no}`} type="date" value={item.expiry_date} style={{ width: "145px" }} onChange={(event) => {
+                            const value = event.currentTarget.value;
+                            setItems((rows) => rows.map((row, index) => index === originalIndex ? { ...row, expiry_date: value, expiry_month: value ? Number(value.slice(5, 7)) : undefined, expiry_year: value ? Number(value.slice(0, 4)) : undefined } : row));
+                          }}/>
                         </td>
                         <td>
                           {item.quantity} {item.free_quantity > 0 ? `+ ${item.free_quantity} free` : ""}
