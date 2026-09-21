@@ -173,6 +173,9 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
     let responseOk = false;
     let resData: any = {};
 
+    if (!supabase) {
+      throw new Error("Supabase is not configured. Configure the Supabase connection before importing an invoice.");
+    }
     if (supabase) {
       const { data, error } = await supabase.functions.invoke("extract-purchase-bill", { body: payload });
       if (!error && data) {
@@ -190,34 +193,6 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
         } else {
           resData = { error: error.message };
         }
-      }
-    }
-
-    const shouldUseNetlifyFallback =
-      !responseOk &&
-      (!resData.error || /failed to fetch|function not found|not found|network/i.test(String(resData.error)));
-
-    if (shouldUseNetlifyFallback) {
-      const { data: sessionData } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
-      const response = await fetch("/api/extract-purchase-bill", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(sessionData.session?.access_token ? { Authorization: `Bearer ${sessionData.session.access_token}` } : {})
-        },
-        body: JSON.stringify(payload)
-      });
-
-      responseOk = response.ok;
-      const responseText = await response.text();
-      try {
-        resData = responseText ? JSON.parse(responseText) : {};
-      } catch {
-        resData = {
-          error: response.status === 504
-            ? "The invoice extraction timed out on the server. Try uploading a smaller/clearer single-page bill image or PDF."
-            : `Server returned a non-JSON error (${response.status}). Please try again.`
-        };
       }
     }
 
