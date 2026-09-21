@@ -253,7 +253,8 @@ export async function POST(request: Request) {
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const authHeader = request.headers.get("authorization") || undefined;
+    const supabase = createClient(supabaseUrl, supabaseServiceKey, authHeader ? { global: { headers: { Authorization: authHeader } } } : undefined);
 
     // Fetch Gemini API Key from payload, organization, or environment
     let apiKey = user_api_key?.trim() || process.env.GEMINI_API_KEY?.trim();
@@ -268,7 +269,7 @@ export async function POST(request: Request) {
 
       if (orgError && !apiKey) {
         return NextResponse.json({
-          error: `Supabase organization settings lookup failed: ${orgError.message}. Run the database migrations on the Supabase project used by this app.`
+          error: "Gemini API key is missing. Please enter your Google Gemini API Key."
         }, { status: 400 });
       }
 
@@ -298,7 +299,7 @@ export async function POST(request: Request) {
       } catch {}
     }
 
-    const modelsToTry = [selectedModel];
+    const modelsToTry = Array.from(new Set([selectedModel, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"].filter(Boolean)));
     let geminiResponseJson: any = null;
     let usedModel = "";
     let lastErrorMsg = "";

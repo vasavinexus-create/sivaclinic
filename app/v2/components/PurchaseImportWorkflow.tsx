@@ -196,9 +196,13 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       (!resData.error || /failed to fetch|function not found|not found|network/i.test(String(resData.error)));
 
     if (shouldUseNetlifyFallback) {
+      const { data: sessionData } = supabase ? await supabase.auth.getSession() : { data: { session: null } };
       const response = await fetch("/api/extract-purchase-bill", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(sessionData.session?.access_token ? { Authorization: `Bearer ${sessionData.session.access_token}` } : {})
+        },
         body: JSON.stringify(payload)
       });
 

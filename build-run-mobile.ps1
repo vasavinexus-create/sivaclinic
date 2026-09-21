@@ -22,6 +22,31 @@ function Invoke-Checked {
   }
 }
 
+function Test-JavaTrustStoreCertificate {
+  param(
+    [Parameter(Mandatory = $true)]
+    [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate
+  )
+
+  $signatureAlgorithm = $Certificate.SignatureAlgorithm.FriendlyName
+  if ($signatureAlgorithm -match "^(md2|md4|md5|sha1)") { return $false }
+
+  try {
+    $rsa = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPublicKey($Certificate)
+    if ($null -ne $rsa) {
+      try {
+        if ($rsa.KeySize -lt 2048) { return $false }
+      } finally {
+        $rsa.Dispose()
+      }
+    }
+  } catch {
+    return $false
+  }
+
+  return $true
+}
+
 function Ensure-GradleTrustStore {
   $trustDir = Join-Path $env:TEMP "sivacare-gradle"
   $trustStore = Join-Path $trustDir "windows-roots.jks"
@@ -41,14 +66,20 @@ function Ensure-GradleTrustStore {
   $certs = $certs | Sort-Object Thumbprint -Unique
   if (-not $certs.Count) { throw "No Windows root certificates could be read for Java truststore creation." }
 
+  $allCertCount = $certs.Count
+  $certs = @($certs | Where-Object { Test-JavaTrustStoreCertificate $_ })
+  $skippedCertCount = $allCertCount - $certs.Count
+  if (-not $certs.Count) { throw "No Java-compatible Windows root certificates were found for Java truststore creation." }
+
   $index = 0
   foreach ($cert in $certs) {
     $index++
     $certPath = Join-Path $certDir "$($cert.Thumbprint).cer"
     [System.IO.File]::WriteAllBytes($certPath, $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
-    & keytool.exe -importcert -noprompt -storetype JKS -keystore $trustStore -storepass changeit -alias "winroot-$index" -file $certPath | Out-Null
+    $keytoolOutput = & keytool.exe -importcert -noprompt -storetype JKS -keystore $trustStore -storepass changeit -alias "winroot-$index" -file $certPath 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Failed to import certificate into Java truststore: $($cert.Subject)" }
   }
+  Write-Host "Imported $index Windows root certificates into Java truststore. Skipped $skippedCertCount weak/legacy certificates."
   return (Resolve-Path -LiteralPath $trustStore).Path
 }
 
