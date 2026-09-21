@@ -12,6 +12,8 @@ export type Organization = {
   id: string;
   clinic_name: string | null;
   pharmacy_name: string | null;
+  sales_gst_mode?: string | null;
+  sales_discount_percent?: number | null;
 };
 
 export type FieldConfig = {

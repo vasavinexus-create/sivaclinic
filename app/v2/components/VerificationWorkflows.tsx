@@ -12,7 +12,7 @@ export function RateEditVerificationWorkflow({ profile, notify }: { profile: Pro
   const load = () => {
     if (!supabase) return;
     setLoading(true);
-    supabase.from("sales").select("id,invoice_no,sold_at,grand_total,rate_edit_verified,patient:patients(patient_id,name,mobile),sale_items(quantity,unit_rate,original_unit_rate,rate_edited,product:products(name))").eq("has_rate_edit", true).eq("rate_edit_verified", false).order("sold_at", { ascending: false }).limit(200).then(({ data }) => {
+    supabase.from("sales").select("id,invoice_no,sold_at,grand_total,gross_total,special_discount_percent,special_discount_amount,rate_edit_verified,patient:patients(patient_id,name,mobile),sale_items(quantity,unit_rate,original_unit_rate,rate_edited,mrp_unit_rate,original_sales_discount_percent,sales_discount_percent,product:products(name))").eq("has_rate_edit", true).eq("rate_edit_verified", false).order("sold_at", { ascending: false }).limit(200).then(({ data }) => {
       setRows(data || []);
       setLoading(false);
     });
@@ -24,5 +24,10 @@ export function RateEditVerificationWorkflow({ profile, notify }: { profile: Pro
     notify(error?.message || "Rate edit verified");
     load();
   };
-  return <div><div className="page-head"><div><h1>Rate Edit Verification</h1><p>Native V2 rate edit approval workflow.</p></div></div><div className="panel">{loading ? <div className="loading-panel"><LoaderCircle className="spin"/> Loading...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Bill</th><th>Date</th><th>Patient</th><th>Total</th><th>Edited items</th><th>Action</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.invoice_no}</td><td>{fmtDate(row.sold_at)}</td><td>{row.patient?.name}</td><td>{money(row.grand_total)}</td><td>{(row.sale_items || []).filter((item: Row) => item.rate_edited).map((item: Row) => `${item.product?.name} ${money(item.original_unit_rate)} -> ${money(item.unit_rate)}`).join(", ")}</td><td><button className="table-edit" onClick={() => verify(row)}><CheckCircle2 size={14}/> Verify</button></td></tr>)}</tbody></table></div> : <div className="empty"><h3>No bills pending verification.</h3><p>Edited-rate bills will appear here.</p></div>}</div></div>;
+  const editNotes = (row: Row) => {
+    const notes = (row.sale_items || []).filter((item: Row) => item.rate_edited).map((item: Row) => `${item.product?.name} MRP rate ${money(item.mrp_unit_rate)} discount ${Number(item.original_sales_discount_percent || 0)}% -> ${Number(item.sales_discount_percent || 0)}%, rate ${money(item.original_unit_rate)} -> ${money(item.unit_rate)}`);
+    if (Number(row.special_discount_percent || 0) > 0) notes.push(`Additional special discount ${Number(row.special_discount_percent || 0)}% (${money(row.special_discount_amount)})`);
+    return notes.join(", ");
+  };
+  return <div><div className="page-head"><div><h1>Rate Edit Verification</h1><p>Native V2 rate edit approval workflow.</p></div></div><div className="panel">{loading ? <div className="loading-panel"><LoaderCircle className="spin"/> Loading...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Bill</th><th>Date</th><th>Patient</th><th>Total</th><th>Edited items</th><th>Action</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.invoice_no}</td><td>{fmtDate(row.sold_at)}</td><td>{row.patient?.name}</td><td>{money(row.grand_total)}</td><td>{editNotes(row)}</td><td><button className="table-edit" onClick={() => verify(row)}><CheckCircle2 size={14}/> Verify</button></td></tr>)}</tbody></table></div> : <div className="empty"><h3>No bills pending verification.</h3><p>Edited-rate bills will appear here.</p></div>}</div></div>;
 }

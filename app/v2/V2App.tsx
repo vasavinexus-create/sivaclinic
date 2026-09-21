@@ -152,7 +152,7 @@ export default function V2App() {
       setOrganization(null);
       return;
     }
-    supabase.from("organizations").select("id,clinic_name,pharmacy_name").eq("id", profile.organization_id).single().then(({ data }) => setOrganization(data as Organization || null));
+    supabase.from("organizations").select("id,clinic_name,pharmacy_name,sales_gst_mode,sales_discount_percent").eq("id", profile.organization_id).single().then(({ data }) => setOrganization(data as Organization || null));
   }, [profile]);
 
   if (session === undefined) return <Loading/>;
@@ -171,7 +171,7 @@ export default function V2App() {
         : active === "follow-up-alerts"
           ? <FollowUpWorkflow/>
           : active === "billing"
-            ? <BillingWorkflow profile={profile} notify={setNotice}/>
+            ? <BillingWorkflow profile={profile} organization={organization} notify={setNotice}/>
             : active === "new-purchase"
               ? <PurchaseWorkflow profile={profile} notify={setNotice}/>
               : active === "inpatient-billing"
@@ -191,7 +191,7 @@ export default function V2App() {
                         : active === "inpatient-payment"
                           ? <InpatientPaymentWorkflow profile={profile} notify={setNotice}/>
                           : active === "settings"
-                            ? <SettingsWorkflow profile={profile} notify={setNotice}/>
+                            ? <SettingsWorkflow profile={profile} onOrganizationChange={setOrganization} notify={setNotice}/>
                             : active === "users-roles"
                               ? <UsersRolesWorkflow notify={setNotice}/>
                               : active === "rate-edit-verification"
