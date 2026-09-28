@@ -26,7 +26,7 @@ function renderCell(row: Row, key: string) {
 
 function formValue(field: FieldConfig, form: FormData) {
   const raw = form.get(field.key);
-  if (field.type === "number") return raw !== null && String(raw) !== "" ? Number(raw) : null;
+  if (field.type === "number") return raw !== null && String(raw) !== "" ? Number(raw) : 0;
   return raw ? String(raw) : null;
 }
 
@@ -78,10 +78,9 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase) return;
     setSaving(true);
     const form = new FormData(event.currentTarget);
-    const payload: Row = { organization_id: profile.organization_id };
+    const payload: Record<string, any> = {};
     module.fields.forEach((field) => {
       if (field.readonlyOnCreate && !editing) return;
       payload[field.key] = formValue(field, form);
@@ -90,17 +89,33 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
       const idField = module.fields.find((field) => field.key.endsWith("_id"))?.key;
       if (idField) payload[idField] = nextCode(module.idPrefix);
     }
-    const result = editing
-      ? await supabase.from(module.table).update(payload).eq("id", editing.id).select("id").single()
-      : await supabase.from(module.table).insert(payload).select("id").single();
-    setSaving(false);
-    if (result.error || !result.data) {
-      notify(result.error?.message || "Save failed");
-      return;
+    
+    try {
+      const { data: { session } } = await supabase!.auth.getSession();
+      const res = await fetch("/api/v2/crud", {
+        method: editing ? "PUT" : "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { "Authorization": `Bearer ${session.access_token}` } : {})
+        },
+        body: JSON.stringify({
+          table: module.table,
+          id: editing?.id,
+          payload
+        })
+      });
+
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Save failed");
+
+      notify(`${module.title} ${editing ? "updated" : "saved"}`);
+      close();
+      state.reload();
+    } catch (e: any) {
+      notify(e.message || "Save failed");
+    } finally {
+      setSaving(false);
     }
-    notify(`${module.title} ${editing ? "updated" : "saved"}`);
-    close();
-    state.reload();
   };
 
   return <div>

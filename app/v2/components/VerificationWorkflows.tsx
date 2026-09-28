@@ -7,17 +7,18 @@ import { fmtDate, money } from "../lib/format";
 import { Profile, Row } from "../lib/types";
 
 export function RateEditVerificationWorkflow({ profile, notify }: { profile: Profile; notify: (message: string) => void }) {
+  const [tab, setTab] = useState<"pending" | "verified">("pending");
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const load = () => {
     if (!supabase) return;
     setLoading(true);
-    supabase.from("sales").select("id,invoice_no,sold_at,grand_total,gross_total,special_discount_percent,special_discount_amount,rate_edit_verified,patient:patients(patient_id,name,mobile),sale_items(quantity,unit_rate,original_unit_rate,rate_edited,mrp_unit_rate,original_sales_discount_percent,sales_discount_percent,product:products(name))").eq("has_rate_edit", true).eq("rate_edit_verified", false).order("sold_at", { ascending: false }).limit(200).then(({ data }) => {
+    supabase.from("sales").select("id,invoice_no,sold_at,grand_total,gross_total,special_discount_percent,special_discount_amount,rate_edit_verified,patient:patients(patient_id,name,mobile),sale_items(quantity,unit_rate,original_unit_rate,rate_edited,mrp_unit_rate,original_sales_discount_percent,sales_discount_percent,product:products(name))").neq("status","cancelled").eq("has_rate_edit", true).eq("rate_edit_verified", tab === "verified").order("sold_at", { ascending: false }).limit(200).then(({ data }) => {
       setRows(data || []);
       setLoading(false);
     });
   };
-  useEffect(load, []);
+  useEffect(load, [tab]);
   const verify = async (row: Row) => {
     if (!supabase) return;
     const { error } = await supabase.from("sales").update({ rate_edit_verified: true, rate_edit_verified_at: new Date().toISOString(), rate_edit_verified_by: profile.id }).eq("id", row.id);
@@ -29,5 +30,5 @@ export function RateEditVerificationWorkflow({ profile, notify }: { profile: Pro
     if (Number(row.special_discount_percent || 0) > 0) notes.push(`Additional special discount ${Number(row.special_discount_percent || 0)}% (${money(row.special_discount_amount)})`);
     return notes.join(", ");
   };
-  return <div><div className="page-head"><div><h1>Rate Edit Verification</h1><p>Native V2 rate edit approval workflow.</p></div></div><div className="panel">{loading ? <div className="loading-panel"><LoaderCircle className="spin"/> Loading...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Bill</th><th>Date</th><th>Patient</th><th>Total</th><th>Edited items</th><th>Action</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.invoice_no}</td><td>{fmtDate(row.sold_at)}</td><td>{row.patient?.name}</td><td>{money(row.grand_total)}</td><td>{editNotes(row)}</td><td><button className="table-edit" onClick={() => verify(row)}><CheckCircle2 size={14}/> Verify</button></td></tr>)}</tbody></table></div> : <div className="empty"><h3>No bills pending verification.</h3><p>Edited-rate bills will appear here.</p></div>}</div></div>;
+  return <div><div className="page-head"><div><h1>Rate Edit Verification</h1><p>Native V2 rate edit approval workflow.</p></div></div><div className="panel"><div className="tab-row" style={{marginBottom:"16px"}}><button className={tab==="pending"?"active":""} onClick={()=>setTab("pending")}>Pending verification</button><button className={tab==="verified"?"active":""} onClick={()=>setTab("verified")}>Verified</button></div>{loading ? <div className="loading-panel"><LoaderCircle className="spin"/> Loading...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Bill</th><th>Date</th><th>Patient</th><th>Total</th><th>Edited items</th><th>Action</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.invoice_no}</td><td>{fmtDate(row.sold_at)}</td><td>{row.patient?.name}</td><td>{money(row.grand_total)}</td><td>{editNotes(row)}</td><td>{tab === "pending" ? <button className="table-edit" onClick={() => verify(row)}><CheckCircle2 size={14}/> Verify</button> : "Verified"}</td></tr>)}</tbody></table></div> : <div className="empty"><h3>{tab === "pending" ? "No bills pending verification." : "No verified bills."}</h3><p>Edited-rate bills will appear here.</p></div>}</div></div>;
 }

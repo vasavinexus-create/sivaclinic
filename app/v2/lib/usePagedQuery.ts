@@ -1,8 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import useSWR from "swr";
 import { supabase } from "../../../lib/supabase";
 import { ModuleConfig, Row } from "./types";
+import { businessDate } from "../../../lib/reporting.mjs";
+import { readAll } from "../../../lib/read-all";
 
 type QueryArgs = {
   module: ModuleConfig;
@@ -52,90 +55,81 @@ async function relatedSearchMatches(moduleKey: string, term: string) {
   return matches;
 }
 
-async function fallbackJoinedSearch(module: ModuleConfig, term: string, page: number, pageSize: number) {
-  if (!supabase || !term) return null;
-  const needle = term.toLowerCase();
-  const from = (page - 1) * pageSize;
-  const to = from + pageSize;
-  const isConsultation = ["consultation", "patient-history", "doctor-fees-pending", "follow-up-alerts"].includes(module.key);
-  const isSale = ["billing", "sales", "medicine-sales", "sales-account", "profit-loss", "reports", "inpatient-billing", "rate-edit-verification"].includes(module.key);
-  if (!isConsultation && !isSale) return null;
-
-  const select = isConsultation
-    ? module.select
-    : `${module.select}${module.select.includes("sale_items(") ? "" : ",sale_items(product:products(product_id,name,barcode,generic_name))"}`;
-  const { data, error } = await supabase
-    .from(module.table)
-    .select(select)
-    .order(module.orderBy, { ascending: module.ascending ?? false })
-    .limit(1000);
-  if (error) return null;
-  const rows = (data || []).filter((row: any) => JSON.stringify(row).toLowerCase().includes(needle));
-  return { rows: rows.slice(from, to), count: rows.length };
-}
-
 export function usePagedQuery({ module, page, pageSize, search, filters, organizationId }: QueryArgs) {
-  const [rows, setRows] = useState<Row[]>([]);
-  const [count, setCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const filterKey = useMemo(() => JSON.stringify(filters), [filters]);
+  
+  // Cache key includes module.table so we can easily invalidate by table name later
+  const cacheKey = organizationId 
+    ? `table:${module.table}:${module.key}:${page}:${pageSize}:${search}:${filterKey}:${organizationId}` 
+    : null;
 
-  const load = useCallback(async () => {
-    if (!supabase) return;
-    setLoading(true);
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
-    let query = supabase
-      .from(module.table)
-      .select(module.select, { count: "exact" });
+  const { data, error, mutate, isValidating } = useSWR(
+    cacheKey,
+    async () => {
+      if (!supabase) throw new Error("Supabase not initialized");
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      let query = supabase.from(module.table).select(module.select, { count: "exact" });
 
-    const organizationColumn = module.organizationColumn ?? null;
-    if (organizationId && organizationColumn) query = query.eq(organizationColumn, organizationId);
+      const organizationColumn = module.organizationColumn === null ? null : module.organizationColumn || "organization_id";
+      if (organizationId && organizationColumn) query = query.eq(organizationColumn, organizationId);
 
-    const trimmed = search.trim();
-    if (trimmed) {
-      const clean = escapeSearch(trimmed);
-      const related = await relatedSearchMatches(module.key, clean);
-      if (related.saleIds.length) {
-        query = query.in("id", related.saleIds);
-      } else if (related.patientIds.length) {
-        query = query.in("patient_id", related.patientIds);
-      } else if (related.doctorIds.length) {
-        query = query.in("doctor_id", related.doctorIds);
-      } else {
-        const term = `*${clean}*`;
-        query = query.or(module.searchColumns.map((column) => `${column}.ilike.${term}`).join(","));
+      if (module.key === "expiry-alerts") {
+        query = query.gt("current_stock", 0).lte("expiry_date", businessDate(new Date(Date.now() + 90 * 86400000).toISOString()));
       }
-    }
-
-    Object.entries(filters).forEach(([key, value]) => {
-      if (value) query = query.eq(key, value === "true" ? true : value === "false" ? false : value);
-    });
-
-    query = query
-      .order(module.orderBy, { ascending: module.ascending ?? false })
-      .range(from, to);
-
-    const { data, count: total, error: queryError } = await query;
-    let nextRows = data || [];
-    let nextCount = total || 0;
-    if (!queryError && trimmed && nextRows.length === 0) {
-      const fallback = await fallbackJoinedSearch(module, trimmed, page, pageSize);
-      if (fallback && fallback.rows.length) {
-        nextRows = fallback.rows;
-        nextCount = fallback.count;
+      if (module.key === "low-stock") {
+        const client = supabase;
+        const products = await readAll(() => client.from("products").select("id,minimum_stock").eq("organization_id", organizationId!).order("id"));
+        const thresholds = new Map<number, string[]>();
+        products.forEach(p => {
+          const minimum = Math.max(0, Number(p.minimum_stock || 0));
+          thresholds.set(minimum, [...(thresholds.get(minimum) || []), p.id]);
+        });
+        if (!thresholds.size) return { rows: [], count: 0 };
+        query = query.or([...thresholds].map(([minimum, ids]) => `and(product_id.in.(${ids.join(",")}),current_stock.lte.${minimum})`).join(","));
       }
+
+      const trimmed = search.trim();
+      if (trimmed) {
+        const clean = escapeSearch(trimmed);
+        const related = await relatedSearchMatches(module.key, clean);
+        if (related.saleIds.length) {
+          query = query.in("id", related.saleIds);
+        } else if (related.patientIds.length) {
+          query = query.in("patient_id", related.patientIds);
+        } else if (related.doctorIds.length) {
+          query = query.in("doctor_id", related.doctorIds);
+        } else {
+          const term = `*${clean}*`;
+          query = query.or(module.searchColumns.map((column) => `${column}.ilike.${term}`).join(","));
+        }
+      }
+
+      Object.entries(filters).forEach(([key, value]) => {
+        if (value) query = query.eq(key, value === "true" ? true : value === "false" ? false : value);
+      });
+
+      query = query
+        .order(module.orderBy, { ascending: module.ascending ?? false })
+        .range(from, to);
+
+      const { data: resultData, count: total, error: queryError } = await query;
+      if (queryError) throw queryError;
+
+      return { rows: (resultData || []) as Row[], count: total || 0 };
+    },
+    { 
+      keepPreviousData: true,
+      revalidateOnFocus: false,
+      dedupingInterval: 10000 // Cache table queries for 10 seconds to make pagination/tabs instant
     }
-    setRows(nextRows);
-    setCount(nextCount);
-    setError(queryError?.message || "");
-    setLoading(false);
-  }, [module, page, pageSize, search, filterKey, organizationId]);
+  );
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  return { rows, count, loading, error, reload: load };
+  return { 
+    rows: data?.rows || [], 
+    count: data?.count || 0, 
+    loading: isValidating && !data, 
+    error: error?.message || "", 
+    reload: () => mutate() 
+  };
 }

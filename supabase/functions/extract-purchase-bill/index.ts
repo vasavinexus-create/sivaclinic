@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.112.3";
-import { validateInvoiceFile, parseInvoiceResponse, geminiFailure } from "../_shared/purchase-extraction.mjs";
+import { validateInvoiceFile, parseInvoiceResponse, geminiFailure, invoiceGenerationConfig } from "../_shared/purchase-extraction.mjs";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,6 +25,9 @@ Rules:
 9. Dates should preferably be normalized to YYYY-MM-DD.
 10. Expiry printed as MM/YY must use expiry_month and expiry_year.
 11. If uncertain, return null and add a warning.
+12. Read sideways or rotated scans in their correct orientation.
+13. Return compact JSON without indentation. Omit absent optional fields rather than repeating null fields. Do not repeat product_name in description when they are identical.
+14. If printed page numbering indicates missing pages, set all_pages_processed to false, requires_review to true, and add a warning. Do not invent rows from missing pages.
 
 Return this JSON shape:
 {
@@ -101,11 +104,12 @@ Deno.serve(async (request) => {
     let usedModel = "";
     let lastGeminiError = "";
     let failureStatus = 502;
-    const modelsToTry = Array.from(new Set([selectedModel, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-flash-lite"].filter(Boolean)));
+    // Never switch models implicitly after the user has selected one.
+    const modelsToTry = [selectedModel];
 
     for (const model of modelsToTry) {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort("Gemini extraction timed out after 110s"), 110_000);
+      const timeout = setTimeout(() => controller.abort("Gemini extraction timed out after 300s"), 300_000);
       try {
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
         const payload = {
@@ -116,10 +120,7 @@ Deno.serve(async (request) => {
               { text: "Extract all purchase invoice data as JSON. Return JSON only." },
             ],
           }],
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-          },
+          generationConfig: invoiceGenerationConfig(model),
         };
 
         const geminiRes = await fetch(geminiUrl, {
@@ -137,8 +138,7 @@ Deno.serve(async (request) => {
           const failure = geminiFailure(geminiRes.status, resText, model);
           lastGeminiError = failure.message;
           failureStatus = failure.status;
-          if (!failure.retryModel) break;
-          continue;
+          break;
         }
 
         const jsonRes = JSON.parse(resText);
@@ -147,8 +147,9 @@ Deno.serve(async (request) => {
         break;
       } catch (error) {
         lastGeminiError = controller.signal.aborted
-          ? "Gemini extraction timed out. Please try a smaller invoice file."
+          ? `Gemini (${model}) did not finish within 300 seconds. This is a processing timeout, not a file-size error. Please retry; if it persists, upload an upright, clear scan or try again later.`
           : error instanceof Error ? error.message : "Could not connect to Gemini.";
+        if (controller.signal.aborted) failureStatus = 504;
         break;
       } finally {
         clearTimeout(timeout);
@@ -185,7 +186,7 @@ Deno.serve(async (request) => {
     geminiResponseJson.validation = {
       ...(geminiResponseJson.validation || {}),
       warnings,
-      requires_review: warnings.length > 0 || items.some((item: Record<string, unknown>) => !item.batch_no || !item.expiry_year),
+      requires_review: geminiResponseJson.validation?.requires_review === true || geminiResponseJson.validation?.all_pages_processed === false || warnings.length > 0 || items.some((item: Record<string, unknown>) => !item.batch_no || !item.expiry_year),
     };
 
     if (supabase) {

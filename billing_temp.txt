@@ -1,0 +1,171 @@
+export function BillingWorkflow({ profile, organization, notify }: { profile: Profile; organization: Organization | null; notify: (message: string) => void }) {
+  const [patientId, setPatientId] = useState("");
+  const [productId, setProductId] = useState("");
+  const [product, setProduct] = useState<Row | null>(null);
+  const [qty, setQty] = useState(1);
+  const [cart, setCart] = useState<Row[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [pending, setPending] = useState<Row[]>([]);
+
+  useEffect(() => {
+    if (!patientId || !supabase) { setPending([]); return; }
+    supabase.from("consultations").select("id,doctor_fee,visited_at").eq("patient_id", patientId).eq("doctor_fee_collected", false).gt("doctor_fee", 0).order("visited_at", { ascending: false }).then(({ data }) => setPending(data || []));
+  }, [patientId]);
+  const [ratePreview, setRatePreview] = useState<Row | null>(null);
+  const [specialDiscountPercent, setSpecialDiscountPercent] = useState(0);
+  const salesGstMode = organization?.sales_gst_mode || "price_plus_gst";
+  const isPriceOnly = salesGstMode === "price_only";
+  const settingDiscount = Number(organization?.sales_discount_percent || 0);
+  const medicine = cart.reduce((sum, item) => sum + (isPriceOnly ? Number(item.selling_rate) * Number(item.qty) : (Number(item.selling_rate) * Number(item.qty)) / (1 + Number(item.gst_percent || 0) / 100)), 0);
+  const tax = cart.reduce((sum, item) => sum + (isPriceOnly ? Number(item.selling_rate) * Number(item.qty) * Number(item.gst_percent || 0) / 100 : Number(item.selling_rate) * Number(item.qty) - (Number(item.selling_rate) * Number(item.qty)) / (1 + Number(item.gst_percent || 0) / 100)), 0);
+  const grossTotal = isPriceOnly ? medicine + tax : cart.reduce((sum, item) => sum + Number(item.selling_rate) * Number(item.qty), 0);
+  const specialDiscountAmount = Number(((medicine + tax) * (Number(specialDiscountPercent || 0) / 100)).toFixed(2));
+  const total = Math.max(0, grossTotal - specialDiscountAmount);
+
+  useEffect(() => {
+    if (!supabase || !productId) {
+      setRatePreview(null);
+      return;
+    }
+    let alive = true;
+    supabase.from("medicine_batches").select("mrp,selling_rate,sales_discount_percent,gst_percent").eq("product_id", productId).gt("current_stock", 0).gte("expiry_date", todayInput()).order("expiry_date", { ascending: true }).order("created_at", { ascending: true }).limit(1).maybeSingle().then(({ data }) => {
+      if (!alive || !data) return;
+      const discount = data.sales_discount_percent == null ? settingDiscount : Number(data.sales_discount_percent);
+      const finalRate = discountedSaleRate(data.selling_rate, 1, discount);
+      const gst = Number(data.gst_percent || 0);
+      const taxEach = isPriceOnly ? finalRate * gst / 100 : finalRate - (finalRate / (1 + gst / 100));
+      setRatePreview({ mrp_unit_rate: Math.ceil(Number(data.selling_rate)), sales_discount_percent: discount, final_rate: finalRate, gst_percent: gst, tax_each: taxEach, bill_rate: isPriceOnly ? finalRate + taxEach : finalRate });
+    });
+    return () => { alive = false; };
+  }, [productId, settingDiscount, isPriceOnly]);
+
+  const add = async () => {
+    if (!supabase || !productId || Number(qty) <= 0) {
+      notify("Select medicine and quantity");
+      return;
+    }
+    const { data, error } = await supabase.from("medicine_batches").select("id,batch_number,expiry_date,current_stock,selling_rate,mrp,gst_percent,sales_discount_percent").eq("product_id", productId).gt("current_stock", 0).gte("expiry_date", todayInput()).order("expiry_date", { ascending: true }).order("created_at", { ascending: true }).limit(1).maybeSingle();
+    if (error || !data) {
+      notify(error?.message || "No FEFO stock available");
+      return;
+    }
+    if (Number(data.current_stock) < Number(qty)) {
+      notify(`Only ${data.current_stock} available in FEFO batch`);
+      return;
+    }
+    const discount = data.sales_discount_percent == null ? settingDiscount : Number(data.sales_discount_percent);
+    const originalRate = discountedSaleRate(data.selling_rate, 1, discount);
+    setCart((items) => [...items, { ...product, ...data, product_id: productId, batch_id: data.id, qty, mrp_unit_rate: Math.ceil(Number(data.selling_rate)), sales_discount_percent: discount, original_sales_discount_percent: discount, original_selling_rate: originalRate, selling_rate: originalRate, rate_edited: false }]);
+    setProductId("");
+    setProduct(null);
+    setRatePreview(null);
+    setQty(1);
+  };
+
+  const changeQty = (index: number, next: number) => {
+    const value = Number(next);
+    if (!Number.isFinite(value) || value < 1) {
+      notify("Quantity must be at least 1");
+      return;
+    }
+    setCart((items) => items.map((item, i) => i !== index ? item : { ...item, qty: value }));
+  };
+
+  const changeDiscount = (index: number, next: number) => {
+    const value = Number(next);
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      notify("Discount must be between 0 and 100");
+      return;
+    }
+    setCart((items) => items.map((item, i) => {
+      if (i !== index) return item;
+      const sellingRate = discountedSaleRate(item.mrp_unit_rate || item.selling_rate, 1, value);
+      const changed = Math.abs(value - Number(item.original_sales_discount_percent || 0)) > 0.001;
+      return { ...item, sales_discount_percent: value, selling_rate: sellingRate, rate_edited: changed };
+    }));
+  };
+
+  const save = async () => {
+    if (!supabase || !cart.length) {
+      notify("Add at least one medicine");
+      return;
+    }
+    if (Number(specialDiscountPercent || 0) < 0 || Number(specialDiscountPercent || 0) > 100) {
+      notify("Special discount must be between 0 and 100");
+      return;
+    }
+    setSaving(true);
+    const fee = pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0);
+    const invoice = `V2-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+    const hasRateEdit = cart.some((item) => item.rate_edited) || Number(specialDiscountPercent || 0) > 0;
+    const pharmacyRevenue = Math.max(0, medicine + tax - specialDiscountAmount);
+    const { data: sale, error } = await supabase.from("sales").insert({
+      organization_id: profile.organization_id,
+      invoice_no: invoice,
+      patient_id: patientId || null,
+      consultation_id: pending.length === 1 ? pending[0].id : null,
+      medicine_subtotal: medicine,
+      medicine_tax: tax,
+      pharmacy_revenue: pharmacyRevenue,
+      doctor_fee: fee,
+      gross_total: grossTotal,
+      special_discount_percent: Number(specialDiscountPercent || 0),
+      special_discount_amount: specialDiscountAmount,
+      grand_total: total + fee,
+      payment_mode: "cash",
+      has_rate_edit: hasRateEdit,
+      rate_edit_verified: !hasRateEdit,
+      status: "completed",
+      created_by: profile.id,
+    }).select("id").single();
+    if (error || !sale) {
+      setSaving(false);
+      notify(error?.message || "Sale save failed");
+      return;
+    }
+    for (const p of pending) {
+      await supabase.rpc("collect_consultation_fee", {
+        p_consultation_id: p.id,
+        p_sale_id: sale.id
+      });
+    }
+    for (const item of cart) {
+      const balance = Number(item.current_stock) - Number(item.qty);
+      await supabase.from("sale_items").insert({ organization_id: profile.organization_id, sale_id: sale.id, product_id: item.product_id, batch_id: item.batch_id, quantity: item.qty, unit_rate: item.selling_rate, original_unit_rate: item.original_selling_rate || item.selling_rate, rate_edited: !!item.rate_edited, mrp: item.mrp, mrp_unit_rate: item.mrp_unit_rate, original_sales_discount_percent: item.original_sales_discount_percent, sales_discount_percent: item.sales_discount_percent, gst_percent: item.gst_percent || 0, line_total: Number(item.selling_rate) * Number(item.qty) });
+      await supabase.from("medicine_batches").update({ current_stock: balance }).eq("id", item.batch_id);
+      await supabase.from("stock_movements").insert({ organization_id: profile.organization_id, product_id: item.product_id, batch_id: item.batch_id, movement_type: "sale", reference_type: "sale", reference_id: sale.id, reference_number: invoice, out_quantity: item.qty, balance_quantity: balance, created_by: profile.id });
+    }
+    const cashAmount = total + fee;
+    await supabase.from("cash_ledger").insert({
+      organization_id: profile.organization_id,
+      occurred_at: new Date().toISOString(),
+      entry_type: "receipt",
+      category: "Pharmacy sale",
+      reference_type: "sale",
+      reference_id: sale.id,
+      amount: cashAmount,
+      payment_mode: "cash",
+      created_by: profile.id,
+    });
+    try {
+      const lines = [];
+      lines.push({ ledger: "Cash", debit: total + fee });
+      if (pharmacyRevenue > 0) lines.push({ ledger: "Pharmacy Sales", credit: pharmacyRevenue });
+      if (fee > 0) lines.push({ ledger: "Consultation Revenue", credit: fee });
+      await postJournal(profile, { voucherType: "sale", entryDate: new Date().toISOString(), referenceType: "sale", referenceId: sale.id, referenceNumber: invoice, narration: `Sale bill ${invoice}`, lines });
+    } catch {}
+    setSaving(false);
+    setCart([]);
+    setSpecialDiscountPercent(0);
+    setPatientId("");
+    setPending([]);
+    setProductId("");
+    setProduct(null);
+    setQty(1);
+    setRatePreview(null);
+    notify(`${invoice} saved`);
+  };
+
+  return <div><div className="page-head"><div><h1>Billing {cart.length > 0 && <span className="billing-head-total">{money(total)}</span>}</h1><p>Native V2 pharmacy billing with FEFO stock deduction.</p></div></div><div className="panel billing-panel"><div className="billing-patient-line" style={{ marginBottom: "20px" }}><AsyncSelect table="patients" select="id,patient_id,name,mobile" searchColumns={["patient_id", "name", "mobile"]} label="Patient / walk-in" value={patientId} onChange={setPatientId} render={patientText}/></div><div className="billing-entry-line"><AsyncSelect table="products" select="id,product_id,name,gst_percent" searchColumns={["product_id", "name", "barcode", "generic_name"]} label="Medicine" value={productId} onChange={(id, row) => { setProductId(id); setProduct(row || null); setRatePreview(null); }} render={productText}/><label className="field qty-field"><span>Quantity</span><input type="number" min="1" step="1" value={qty} onChange={(event) => setQty(Number(event.currentTarget.value))}/></label><button type="button" className="primary" onClick={add}><Plus size={16}/> Add</button></div>{ratePreview && <div className="auth-message stock-preview">MRP rate: <b>{money(ratePreview.mrp_unit_rate)}</b> · Discount: <b>{Number(ratePreview.sales_discount_percent || 0)}%</b> · Final rate: <b>{money(ratePreview.final_rate)}</b> · GST: <b>{Number(ratePreview.gst_percent || 0)}% / {money(ratePreview.tax_each)}</b> · Billing rate: <b>{money(ratePreview.bill_rate)}</b></div>}{cart.length ? <><div className="data-wrap"><table className="data-table billing-table"><thead><tr><th className="col-med">Medicine</th><th className="col-batch">Batch</th><th className="col-qty">Qty</th><th className="col-rate">MRP rate</th><th className="col-rate">Discount %</th><th className="col-rate">Final rate</th><th className="col-gst">GST</th><th className="col-total">Total</th><th className="col-action"></th></tr></thead><tbody>{cart.map((item, index) => <tr key={`${item.batch_id}-${index}`} className="cart-row-interactive"><td className="col-med"><strong>{item.name}</strong></td><td className="col-batch">{item.batch_number}</td><td className="col-qty"><input className="table-qty-input" type="number" min="1" step="1" value={item.qty} onChange={(event) => changeQty(index, Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.mrp_unit_rate)}</td><td className="col-rate"><input className="table-qty-input" type="number" min="0" max="100" step="0.01" value={item.sales_discount_percent ?? 0} onChange={(event) => changeDiscount(index, Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.selling_rate)}</td><td className="col-gst">{Number(item.gst_percent || 0)}%</td><td className="col-total"><strong>{money(Number(item.selling_rate) * Number(item.qty))}</strong></td><td className="col-action"><button className="table-edit danger-btn" onClick={() => setCart((items) => items.filter((_, i) => i !== index))}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div><div className="checkout sales-checkout"><label className="field qty-field special-discount-field"><span>Additional special discount %</span><input type="number" min="0" max="100" step="0.01" value={specialDiscountPercent} onChange={(event) => setSpecialDiscountPercent(Number(event.currentTarget.value))}/></label>{pending.length > 0 && <div className="fee-banner auth-message" style={{ marginBottom: "16px", background: "#fff5f5", color: "#c53030", padding: "12px", borderRadius: "8px", border: "1px solid #fed7d7" }}>Pending doctor fee ({pending.length}) will be collected: <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></div>}<div className="totals-mini"><span>Medicine <b>{money(medicine)}</b></span><span>Tax <b>{money(tax)}</b></span>{Number(specialDiscountPercent || 0) > 0 && <span>Special discount <b>-{money(specialDiscountAmount)}</b></span>}{pending.length > 0 && <span>Doctor fee <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></span>}<strong>Grand total <b>{money(total + pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></strong></div><button className="primary" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Complete sale</button></div></> : <div className="empty"><h3>No medicines added.</h3><p>Select medicine and add quantity.</p></div>}</div></div>;
+}
+

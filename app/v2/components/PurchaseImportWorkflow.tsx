@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  CheckCircle2, FileText, Key, LoaderCircle,
+  CheckCircle2, FileText, Key, LoaderCircle, Camera,
   PackagePlus, Plus, Search, ShieldAlert, Sparkles, Upload, X
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
@@ -15,7 +15,7 @@ import { Field } from "./controls";
 const GEMINI_MODEL_OPTIONS = [
   { value: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
   { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
-  { value: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" }
+  { value: "qwen/qwen3.8-27b", label: "Groq Qwen 3.8 27B Vision" }
 ];
 
 export interface StagingItem {
@@ -66,6 +66,11 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [userGeminiKey, setUserGeminiKey] = useState("");
   const [geminiModel, setGeminiModel] = useState("gemini-3.6-flash");
+  const modelSelectedByUser = useRef(false);
+  const selectGeminiModel = (model: string) => {
+    modelSelectedByUser.current = true;
+    setGeminiModel(model);
+  };
   const [apiKeyError, setApiKeyError] = useState("");
   const [extractionError, setExtractionError] = useState("");
   const [pendingBase64, setPendingBase64] = useState<{ base64: string; mimeType: string } | null>(null);
@@ -110,14 +115,19 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
 
   useEffect(() => {
     if (!supabase) return;
+    let cancelled = false;
     supabase
       .from("organizations")
       .select("gemini_model")
       .eq("id", profile.organization_id)
       .single()
       .then(({ data }) => {
-        if (data?.gemini_model) setGeminiModel(data.gemini_model);
+        if (!cancelled && !modelSelectedByUser.current && data?.gemini_model) {
+          const isValid = GEMINI_MODEL_OPTIONS.some(o => o.value === data.gemini_model);
+          setGeminiModel(isValid ? data.gemini_model : "gemini-3.6-flash");
+        }
       });
+    return () => { cancelled = true; };
   }, [profile.organization_id]);
 
   // Load saved description mappings when supplier changes
@@ -157,7 +167,9 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
 
   // Execute extraction API call
   const callExtractionApi = async (base64Content: string, mimeType: string, customApiKey?: string) => {
-    setUploadProgress("Analyzing invoice structure with Gemini AI...");
+    const isGroq = geminiModel.startsWith("qwen");
+    const functionName = isGroq ? "extract-purchase-bill-groq" : "extract-purchase-bill";
+    setUploadProgress(`Analyzing invoice structure with ${isGroq ? "Groq" : "Gemini"} AI...`);
     setExtractionError("");
 
     setPendingBase64({ base64: base64Content, mimeType });
@@ -166,7 +178,8 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       file_base64: base64Content,
       mime_type: mimeType,
       organization_id: profile.organization_id,
-      gemini_model: geminiModel,
+      gemini_model: isGroq ? undefined : geminiModel,
+      groq_model: isGroq ? geminiModel : undefined,
       user_api_key: customApiKey || userGeminiKey || undefined
     };
 
@@ -177,7 +190,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       throw new Error("Supabase is not configured. Configure the Supabase connection before importing an invoice.");
     }
     if (supabase) {
-      const { data, error } = await supabase.functions.invoke("extract-purchase-bill", { body: payload });
+      const { data, error } = await supabase.functions.invoke(functionName, { body: payload });
       if (!error && data) {
         responseOk = true;
         resData = data;
@@ -197,9 +210,9 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
     }
 
     if (!responseOk || !resData.success) {
-      const errMsg = resData.error || "Failed to extract invoice via Gemini API";
+      const errMsg = resData.error || `Failed to extract invoice via ${isGroq ? "Groq" : "Gemini"} API`;
       setPendingBase64({ base64: base64Content, mimeType });
-      if (/api key is missing|enter your google gemini api key|API key is invalid|API key not valid|API_KEY_INVALID|API key expired/i.test(errMsg)) {
+      if (/api key is missing|enter your (google gemini|groq) api key|API key is invalid|API key not valid|API_KEY_INVALID|API key expired/i.test(errMsg)) {
         setApiKeyError(errMsg);
         setShowApiKeyModal(true);
       } else {
@@ -297,47 +310,108 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
     }
   };
 
+const stitchImages = async (files: File[]): Promise<string> => {
+  const images = await Promise.all(
+    files.map(
+      (file) =>
+        new Promise<HTMLImageElement>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = e.target?.result as string;
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        })
+    )
+  );
+
+  const maxWidth = Math.max(...images.map((img) => img.width));
+  const totalHeight = images.reduce((sum, img) => sum + img.height, 0);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = maxWidth;
+  canvas.height = totalHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not create canvas context");
+
+  let yOffset = 0;
+  for (const img of images) {
+    ctx.drawImage(img, 0, yOffset);
+    yOffset += img.height;
+  }
+
+  return canvas.toDataURL("image/jpeg", 0.7);
+};
+
   // Handle File Upload and AI Extraction
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = event.target.files?.[0];
-    if (!selectedFile) return;
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
 
-    const validTypes = ["application/pdf", "image/jpeg", "image/jpg", "image/png"];
-    if (!validTypes.includes(selectedFile.type)) {
-      notify("Please upload a valid PDF, JPG, or PNG invoice file.");
+    const validTypes = ["application/pdf", "image/jpeg", "image/jpg", "image/png", "image/webp"];
+    for (const f of files) {
+      if (!validTypes.includes(f.type)) {
+        notify("Please upload a valid PDF, JPG, or PNG invoice file.");
+        return;
+      }
+      if (f.size === 0) {
+        notify("Please upload non-empty invoice files.");
+        return;
+      }
+    }
+
+    if (files.length > 1 && files.some(f => f.type === "application/pdf")) {
+      notify("Please upload only 1 PDF at a time, or upload multiple images.");
       return;
     }
-    if (selectedFile.size === 0 || selectedFile.size > 3 * 1024 * 1024) {
-      notify("Please upload a non-empty invoice file smaller than 3 MB.");
+    
+    if (geminiModel.startsWith("qwen") && files.some(f => f.type === "application/pdf")) {
+      notify("Groq does not support PDFs. Please select a Gemini model to upload PDFs, or upload an image instead.");
       return;
     }
 
-    setFile(selectedFile);
+    setFile(files[0]);
     setStep("extracting");
     setUploadProgress("Uploading file to secure storage...");
     setExtractionError("");
 
     try {
-      // 1. Safe Upload to Supabase Storage if image file
-      if (supabase && selectedFile.type.startsWith("image/")) {
-        try {
-          const filePath = `invoices/${profile.organization_id}/${Date.now()}_${selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-          await supabase.storage
-            .from("prescription_attachments")
-            .upload(filePath, selectedFile, { upsert: true });
-        } catch {
-          // Best-effort attachment backup; extraction still uses the local file payload.
+      let finalBase64 = "";
+      let finalMimeType = "image/jpeg";
+
+      if (files.length > 1) {
+        setUploadProgress("Stitching multiple images...");
+        const dataUrl = await stitchImages(files);
+        finalBase64 = dataUrl.split(",")[1];
+      } else {
+        const selectedFile = files[0];
+        finalMimeType = selectedFile.type;
+        // 1. Safe Upload to Supabase Storage if image file
+        if (supabase && selectedFile.type.startsWith("image/")) {
+          try {
+            const filePath = `invoices/${profile.organization_id}/${Date.now()}_${selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+            await supabase.storage
+              .from("prescription_attachments")
+              .upload(filePath, selectedFile, { upsert: true });
+          } catch {
+            // Best-effort attachment backup; extraction still uses the local file payload.
+          }
         }
+        // 2. Convert file to Base64 for Gemini API Route
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error("Could not read the invoice file. Please select it again."));
+          reader.onabort = () => reject(new Error("Invoice file reading was cancelled."));
+          reader.readAsDataURL(selectedFile);
+        });
+        finalBase64 = dataUrl.split(",")[1];
       }
-      // 2. Convert file to Base64 for Gemini API Route
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("Could not read the invoice file. Please select it again."));
-        reader.onabort = () => reject(new Error("Invoice file reading was cancelled."));
-        reader.readAsDataURL(selectedFile);
-      });
-      await callExtractionApi(dataUrl.split(",")[1], selectedFile.type);
+      
+      await callExtractionApi(finalBase64, finalMimeType);
     } catch (err: any) {
       setStep("upload");
       setExtractionError(err.message || "Failed to process uploaded file");
@@ -644,7 +718,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
             current_stock: totalStockQty,
             purchase_rate: purchaseRatePerUnit,
             mrp: item.mrp,
-            selling_rate: item.selling_rate || item.mrp,
+            selling_rate: (Number(item.selling_rate) > 0 ? Number(item.selling_rate) : Number(item.mrp || 0)) / unitsPerPurchaseUnit,
             gst_percent: item.gst_percent,
             purchase_unit: item.purchase_unit || "unit",
             sale_unit: item.sale_unit || "unit",
@@ -782,21 +856,28 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
 
             <label className="field" style={{ width: "100%", maxWidth: "360px", marginTop: "12px", textAlign: "left" }}>
               <span>Gemini model</span>
-              <select value={geminiModel} onChange={(event) => setGeminiModel(event.currentTarget.value)}>
+              <select value={geminiModel} onChange={(event) => selectGeminiModel(event.currentTarget.value)}>
                 {GEMINI_MODEL_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
             </label>
 
-            <label className="primary" style={{ cursor: "pointer", marginTop: "16px" }}>
-              <FileText size={18} /> Select Bill File (PDF / JPG / PNG)
-              <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={handleFileUpload} style={{ display: "none" }} />
-            </label>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", alignItems: "center", marginTop: "16px" }}>
+              <label className="primary" style={{ cursor: "pointer", width: "100%", maxWidth: "300px" }}>
+                <FileText size={18} /> Select Files (PDF / JPG / PNG)
+                <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp" onChange={handleFileUpload} style={{ display: "none" }} />
+              </label>
+              
+              <label className="secondary" style={{ cursor: "pointer", width: "100%", maxWidth: "300px" }}>
+                <Camera size={18} /> Take Camera Photos
+                <input type="file" multiple accept="image/*" capture="environment" onChange={handleFileUpload} style={{ display: "none" }} />
+              </label>
+            </div>
 
             {extractionError && (
               <div style={{ width: "100%", maxWidth: "620px", marginTop: "16px", background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: "8px", padding: "12px 14px", textAlign: "left", fontSize: "12px", lineHeight: 1.5 }}>
-                <strong style={{ display: "block", marginBottom: "6px" }}>Gemini extraction failed</strong>
+                <strong style={{ display: "block", marginBottom: "6px" }}>{geminiModel.startsWith("qwen") ? "Groq" : "Gemini"} extraction failed</strong>
                 {extractionError}
                 {pendingBase64 && (
                   <div style={{ marginTop: "10px" }}>
@@ -960,7 +1041,11 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                         <td>{money(item.rate)}</td>
                         <td>{money(item.mrp)}</td>
                         <td>{item.gst_percent}%</td>
-                        <td><strong>{money(item.line_total)}</strong></td>
+                        <td>
+                          <strong style={{ color: Math.abs(((item.quantity * item.rate - item.discount_amount) * (1 + item.gst_percent / 100)) - item.line_total) > 1 ? "#dc2626" : undefined }}>
+                            {money(item.line_total)}
+                          </strong>
+                        </td>
 
                         {/* Mapped Product Selector Cell */}
                         <td style={{ minWidth: "220px" }}>
@@ -1006,7 +1091,9 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
             {/* Bottom Actions */}
             <div className="checkout" style={{ marginTop: "20px" }}>
               <div>
-                <strong>Invoice Total: {money(calculatedGrandTotal)}</strong>
+                <strong style={{ color: printedTotal > 0 && Math.abs(calculatedGrandTotal - printedTotal) > 1 ? "#dc2626" : undefined }}>
+                  Invoice Total: {money(calculatedGrandTotal)} {printedTotal > 0 && Math.abs(calculatedGrandTotal - printedTotal) > 1 ? `(Expected: ${money(printedTotal)})` : ""}
+                </strong>
                 {counts.unmapped > 0 && (
                   <div style={{ fontSize: "12px", color: "#dc2626" }}>
                     ⚠ {counts.unmapped} items need product mapping before approval.
@@ -1051,32 +1138,40 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
               <button className="secondary" onClick={() => setShowApiKeyModal(false)}><X size={16} /></button>
             </div>
 
-            {apiKeyError && (
-              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", padding: "10px 14px", borderRadius: "8px", marginBottom: "14px", color: "#991b1b", fontSize: "12px", lineHeight: 1.4 }}>
-                <strong>⚠ Error from Google:</strong> {apiKeyError}
-              </div>
-            )}
+            <div style={{ marginBottom: "16px", color: "#64748b", fontSize: "14px", lineHeight: "1.5" }}>
+              Provide your {geminiModel.startsWith("qwen") ? "Groq" : "Google Gemini"} API key to use AI invoice extraction.
+              {apiKeyError && <div style={{ marginTop: "10px", color: "#dc2626", background: "#fef2f2", padding: "10px", borderRadius: "6px", fontSize: "13px" }}><strong>Error:</strong> {apiKeyError}</div>}
+            </div>
 
             {/* Step-by-step instructions */}
             <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: "8px", padding: "12px 14px", marginBottom: "16px", fontSize: "12px", color: "#0c4a6e", lineHeight: 1.7 }}>
-              <strong style={{ display: "block", marginBottom: "6px" }}>📋 How to get your free Gemini API key:</strong>
+              <strong style={{ display: "block", marginBottom: "6px" }}>📋 How to get your free {geminiModel.startsWith("qwen") ? "Groq" : "Gemini"} API key:</strong>
               <ol style={{ margin: 0, paddingLeft: "18px" }}>
-                <li>Open <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "#0284c7", fontWeight: 600 }}>aistudio.google.com/app/apikey</a></li>
-                <li>Find a key listed under <strong>"API Keys"</strong></li>
-                <li>Click <strong>"Copy key"</strong> button or the 📋 copy icon next to the key</li>
-                <li>Paste the copied key below. The app will send it to Google Gemini and show Google&apos;s response if the key is invalid.</li>
+                {geminiModel.startsWith("qwen") ? (
+                  <>
+                    <li>Open <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" style={{ color: "#0284c7", fontWeight: 600 }}>console.groq.com/keys</a></li>
+                    <li>Create or copy your API key</li>
+                  </>
+                ) : (
+                  <>
+                    <li>Open <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" style={{ color: "#0284c7", fontWeight: 600 }}>aistudio.google.com/app/apikey</a></li>
+                    <li>Find a key listed under <strong>"API Keys"</strong></li>
+                    <li>Click <strong>"Copy key"</strong> button</li>
+                  </>
+                )}
+                <li>Paste the copied key below.</li>
               </ol>
             </div>
 
             <form onSubmit={handleSaveApiKeyAndRetry}>
               <div className="field" style={{ marginBottom: "16px" }}>
                 <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px", color: "#1e293b" }}>
-                  Gemini API Key <b style={{ color: "#dc2626" }}>*</b>
+                  {geminiModel.startsWith("qwen") ? "Groq API Key" : "Gemini API Key"} <b style={{ color: "#dc2626" }}>*</b>
                 </label>
                 <input
                   name="user_gemini_key"
                   type="text"
-                  placeholder="Paste your Gemini API key"
+                  placeholder={`Paste your ${geminiModel.startsWith("qwen") ? "Groq" : "Gemini"} API key`}
                   defaultValue={userGeminiKey}
                   required
                   style={{
@@ -1091,18 +1186,18 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
                   }}
                 />
                 <div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
-                  Use the full key exactly as copied from Google AI Studio.
+                  Use the full key exactly as copied from the console.
                 </div>
               </div>
 
               <div className="field" style={{ marginBottom: "16px" }}>
                 <label style={{ display: "block", fontSize: "13px", fontWeight: 600, marginBottom: "6px", color: "#1e293b" }}>
-                  Gemini model
+                  AI Model
                 </label>
                 <select
                   name="gemini_model"
                   value={geminiModel}
-                  onChange={(event) => setGeminiModel(event.currentTarget.value)}
+                  onChange={(event) => selectGeminiModel(event.currentTarget.value)}
                   style={{
                     width: "100%",
                     height: "44px",
@@ -1132,14 +1227,14 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       {/* MODAL 1: SEARCH & MAP PRODUCT */}
       {editingItemIndex !== null && (
         <div className="image-viewer" style={{ background: "#000000aa" }}>
-          <div style={{ background: "white", color: "var(--text)", width: "90%", maxWidth: "680px", margin: "auto", borderRadius: "12px", padding: "20px", maxHeight: "90vh", overflowY: "auto" }}>
+          <div style={{ background: "white", color: "#0f172a", width: "90%", maxWidth: "680px", margin: "auto", borderRadius: "12px", padding: "20px", maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
               <h2 style={{ margin: 0, fontSize: "18px" }}>Map Item #{items[editingItemIndex].line_no}</h2>
               <button className="secondary" onClick={() => setEditingItemIndex(null)}><X size={16} /></button>
             </div>
 
-            <div style={{ background: "#f8fafc", padding: "10px 12px", borderRadius: "8px", marginBottom: "14px", fontSize: "12px" }}>
-              <strong>Supplier Invoice Description:</strong> {items[editingItemIndex].supplier_description}
+            <div style={{ background: "#f8fafc", padding: "10px 12px", borderRadius: "8px", marginBottom: "14px", fontSize: "12px", color: "#334155" }}>
+              <strong style={{ color: "#0f172a" }}>Supplier Invoice Description:</strong> {items[editingItemIndex].supplier_description}
               <div>Mfg: {items[editingItemIndex].manufacturer || "-"} | Pack: {items[editingItemIndex].pack || "-"} | Rate: {money(items[editingItemIndex].rate)} | MRP: {money(items[editingItemIndex].mrp)}</div>
             </div>
 
@@ -1162,9 +1257,9 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
             {/* Live Search Product Master */}
             <div style={{ marginBottom: "14px" }}>
               <div style={{ fontSize: "11px", fontWeight: "bold", color: "var(--muted)", marginBottom: "6px" }}>SEARCH COMPLETE PRODUCT MASTER</div>
-              <div className="search-box">
-                <Search size={16} />
-                <input type="text" placeholder="Search product name, code, barcode..." value={productSearchQuery} onChange={(e) => setProductSearchQuery(e.target.value)} />
+              <div className="search-box" style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "8px" }}>
+                <Search size={16} color="#64748b" />
+                <input type="text" placeholder="Search product name, code, barcode..." value={productSearchQuery} onChange={(e) => setProductSearchQuery(e.target.value)} style={{ color: "#0f172a", background: "transparent" }} />
               </div>
             </div>
 
@@ -1196,7 +1291,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
       {/* MODAL 2: CREATE NEW PRODUCT */}
       {showCreateProductModal && (
         <div className="image-viewer" style={{ background: "#000000aa" }}>
-          <div style={{ background: "white", color: "var(--text)", width: "90%", maxWidth: "560px", margin: "auto", borderRadius: "12px", padding: "20px" }}>
+          <div style={{ background: "white", color: "#0f172a", width: "90%", maxWidth: "560px", margin: "auto", borderRadius: "12px", padding: "20px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
               <h2 style={{ margin: 0, fontSize: "18px" }}>Create New Product</h2>
               <button className="secondary" onClick={() => setShowCreateProductModal(false)}><X size={16} /></button>

@@ -8,24 +8,6 @@ import { money } from "../lib/format";
 import { Profile, Row } from "../lib/types";
 import { Field } from "./controls";
 
-export function AccountReportWorkflow({ view, profile }: { view: string; profile: Profile }) {
-  const [stats, setStats] = useState({ sales: 0, expenses: 0, purchases: 0, cash: 0 });
-  useEffect(() => {
-    if (!supabase) return;
-    Promise.all([
-      supabase.from("sales").select("grand_total").eq("organization_id", profile.organization_id).eq("status", "completed"),
-      supabase.from("expenses").select("amount").eq("organization_id", profile.organization_id),
-      supabase.from("purchases").select("invoice_total").eq("organization_id", profile.organization_id).eq("status", "completed"),
-      supabase.from("cash_ledger").select("entry_type,amount").eq("organization_id", profile.organization_id).eq("payment_mode", "cash"),
-    ]).then(([sales, expenses, purchases, cash]) => setStats({
-      sales: (sales.data || []).reduce((a: number, x: any) => a + Number(x.grand_total || 0), 0),
-      expenses: (expenses.data || []).reduce((a: number, x: any) => a + Number(x.amount || 0), 0),
-      purchases: (purchases.data || []).reduce((a: number, x: any) => a + Number(x.invoice_total || 0), 0),
-      cash: (cash.data || []).reduce((a: number, x: any) => a + (x.entry_type === "receipt" ? Number(x.amount || 0) : -Number(x.amount || 0)), 0),
-    }));
-  }, [profile.organization_id]);
-  return <div><div className="page-head"><div><h1>{view}</h1><p>Native V2 account summary from database records.</p></div></div><section className="summary-strip"><div className="panel summary-card"><span>Sales</span><strong>{money(stats.sales)}</strong><small>Completed bills</small></div><div className="panel summary-card"><span>Purchases</span><strong>{money(stats.purchases)}</strong><small>Completed supplier bills</small></div><div className="panel summary-card"><span>Expenses</span><strong>{money(stats.expenses)}</strong><small>Recorded expenses</small></div><div className="panel summary-card"><span>Cash</span><strong>{money(stats.cash)}</strong><small>Cash ledger balance</small></div></section></div>;
-}
 
 export function ExpenseWorkflow({ profile, notify }: { profile: Profile; notify: (message: string) => void }) {
   const [ledgers, setLedgers] = useState<Row[]>([]);

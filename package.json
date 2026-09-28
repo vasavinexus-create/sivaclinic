@@ -7,13 +7,13 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_OPTIONS=--max-old-space-size=4096 next dev -p 3002",
     "build": "next build",
     "start": "next start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "mobile:build": "next build && cap sync android",
+    "mobile:build": "node scripts/build-mobile.mjs && cap sync android",
     "mobile:sync": "cap sync android",
     "mobile:open": "cap open android",
     "android:assemble": "cd android && gradlew.bat assembleDebug",
@@ -25,16 +25,24 @@
     "@capacitor/android": "^8.5.2",
     "@capacitor/cli": "^8.5.2",
     "@capacitor/core": "^8.5.2",
+    "@powersync/react": "^2.0.1",
+    "@powersync/web": "^2.4.1",
+    "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.112.3",
+    "@types/uuid": "^10.0.0",
     "drizzle-orm": "0.45.2",
     "lucide-react": "^1.31.0",
     "next": "^16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6",
-    "recharts": "^3.10.1"
+    "recharts": "^3.10.1",
+    "swr": "^2.5.1",
+    "uuid": "^14.0.2",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "9.39.4",
     "@next/eslint-plugin-next": "16.2.6",
     "@tailwindcss/postcss": "4.2.1",
@@ -43,6 +51,7 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
+    "cross-env": "^10.1.0",
     "drizzle-kit": "0.31.10",
     "electron": "^44.4.3",
     "electron-builder": "^26.15.3",
@@ -79,7 +88,7 @@
         "nsis",
         "portable"
       ],
-      "icon": "public/favicon.ico"
+      "icon": null
     },
     "nsis": {
       "oneClick": false,

@@ -1,9 +1,10 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useState, useEffect } from "react";
 import { CheckCircle2, LoaderCircle } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 import { postJournal } from "../lib/accounting";
+import { money } from "../lib/format";
 import { Profile, Row } from "../lib/types";
 import { AsyncSelect, Field, FormPanel } from "./controls";
 
@@ -18,6 +19,7 @@ function patientText(row: Row) {
 export function SupplierPaymentWorkflow({ profile, notify }: { profile: Profile; notify: (message: string) => void }) {
   const [supplierId, setSupplierId] = useState("");
   const [saving, setSaving] = useState(false);
+  
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!supabase || !supplierId) return;
@@ -42,6 +44,21 @@ export function SupplierPaymentWorkflow({ profile, notify }: { profile: Profile;
 export function InpatientPaymentWorkflow({ profile, notify }: { profile: Profile; notify: (message: string) => void }) {
   const [patientId, setPatientId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [balance, setBalance] = useState<number | null>(null);
+  const [pendingFee, setPendingFee] = useState<number>(0);
+
+  useEffect(() => {
+    if (!patientId || !supabase) { setBalance(null); setPendingFee(0); return; }
+    
+    supabase.from("patient_ledger").select("debit,credit").eq("patient_id", patientId).then(({ data }) => {
+      if (!data) { setBalance(null); return; }
+      setBalance(data.reduce((sum: number, r: any) => sum + Number(r.debit || 0) - Number(r.credit || 0), 0));
+    });
+    
+    supabase.from("consultations").select("doctor_fee").eq("patient_id", patientId).eq("doctor_fee_collected", false).gt("doctor_fee", 0).then(({ data }) => {
+      setPendingFee((data || []).reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0));
+    });
+  }, [patientId]);
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!supabase || !patientId) return;
@@ -60,5 +77,8 @@ export function InpatientPaymentWorkflow({ profile, notify }: { profile: Profile
     notify(error?.message || "Inpatient payment saved");
     if (!error) event.currentTarget.reset();
   };
-  return <FormPanel title="Inpatient Payment" subtitle="Native V2 patient payment workflow" onSubmit={save}><div className="form-grid"><AsyncSelect table="patients" select="id,patient_id,name,mobile" searchColumns={["patient_id", "name", "mobile"]} label="Patient" value={patientId} onChange={setPatientId} render={patientText}/><Field name="paid_on" label="Date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)}/><Field name="amount" label="Amount" type="number" required/><label className="field"><span>Payment mode <b>*</b></span><select name="payment_mode" required defaultValue="cash"><option value="cash">Cash</option><option value="bank">Bank</option><option value="upi">UPI</option><option value="card">Card</option></select></label><Field name="reference_number" label="Reference number"/></div><div className="form-actions"><button className="primary" disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Save payment</button></div></FormPanel>;
+  return <FormPanel title="Inpatient Payment" subtitle="Native V2 patient payment workflow" onSubmit={save}><div className="form-grid"><AsyncSelect table="patients" select="id,patient_id,name,mobile" searchColumns={["patient_id", "name", "mobile"]} label="Patient" value={patientId} onChange={setPatientId} render={patientText}/>
+      {patientId && balance !== null && <div className="auth-message" style={{ gridColumn: "1 / -1", background: "#f0fdf4", color: "#22543d", padding: "12px", borderRadius: "8px", border: "1px solid #c6f6d5" }}>
+        <span>Current Patient Balance: <b style={{ color: balance + pendingFee > 0 ? "#c53030" : "#276749" }}>{money(balance + pendingFee)}</b> {balance + pendingFee > 0 ? "(Dr / Pending Payment)" : balance + pendingFee < 0 ? "(Cr / Excess Paid)" : ""}</span>
+      </div>}<Field name="paid_on" label="Date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)}/><Field name="amount" label="Amount" type="number" required/><label className="field"><span>Payment mode <b>*</b></span><select name="payment_mode" required defaultValue="cash"><option value="cash">Cash</option><option value="bank">Bank</option><option value="upi">UPI</option><option value="card">Card</option></select></label><Field name="reference_number" label="Reference number"/></div><div className="form-actions"><button className="primary" disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Save payment</button></div></FormPanel>;
 }

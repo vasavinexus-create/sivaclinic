@@ -28,6 +28,7 @@ export const v2Nav: V2NavItem[] = [
   { label: "Expiry Alerts", key: "expiry-alerts" },
   { title: "PURCHASES" },
   { label: "AI Bill Import", key: "purchase-import" },
+  { label: "Adv AI Bill Import", key: "adv-purchase-import" },
   { label: "Product Mappings", key: "product-mappings" },
   { label: "New Purchase", key: "new-purchase" },
   { label: "Purchase History", key: "purchase-history" },
@@ -48,7 +49,7 @@ export const v2Nav: V2NavItem[] = [
   { label: "Profit & Loss", key: "profit-loss" },
   { label: "Reports", key: "reports" },
   { title: "ADMINISTRATION" },
-  { label: "Users & Roles", key: "users-roles" },
+  { label: "Users & Roles", key: "users-and-roles" },
   { label: "Settings", key: "settings" },
 ];
 
@@ -186,23 +187,23 @@ export const v2Modules: ModuleConfig[] = [
   },
   {
     key: "inventory", navLabel: "Inventory", title: "Inventory", subtitle: "Live medicine batch stock", table: "medicine_batches",
-    select: "id,batch_number,expiry_date,quantity_received,current_stock,purchase_rate,mrp,selling_rate,gst_percent,rack_location,created_at",
+    select: "id,product:products(name),batch_number,expiry_date,quantity_received,current_stock,purchase_rate,mrp,selling_rate,gst_percent,rack_location,created_at",
     orderBy: "created_at", ascending: false, searchColumns: ["batch_number", "rack_location"],
-    columns: [["batch_number", "Batch"], ["expiry_date", "Expiry"], ["quantity_received", "Received"], ["current_stock", "Stock"], ["purchase_rate", "Purchase"], ["selling_rate", "Selling"], ["mrp", "MRP"], ["rack_location", "Rack"]],
+    columns: [["product.name", "Medicine"], ["batch_number", "Batch"], ["expiry_date", "Expiry"], ["quantity_received", "Received"], ["current_stock", "Stock"], ["purchase_rate", "Purchase"], ["selling_rate", "Selling"], ["mrp", "MRP"], ["rack_location", "Rack"]],
     fields: [], editable: false,
   },
   {
     key: "low-stock", navLabel: "Low Stock", title: "Low Stock", subtitle: "Stock batches for review", table: "medicine_batches",
-    select: "id,batch_number,expiry_date,current_stock,mrp,selling_rate,rack_location,created_at",
+    select: "id,product:products(name),batch_number,expiry_date,current_stock,mrp,selling_rate,rack_location,created_at",
     orderBy: "current_stock", ascending: true, searchColumns: ["batch_number", "rack_location"],
-    columns: [["batch_number", "Batch"], ["current_stock", "Stock"], ["expiry_date", "Expiry"], ["selling_rate", "Selling"], ["mrp", "MRP"], ["rack_location", "Rack"]],
+    columns: [["product.name", "Medicine"], ["batch_number", "Batch"], ["current_stock", "Stock"], ["expiry_date", "Expiry"], ["selling_rate", "Selling"], ["mrp", "MRP"], ["rack_location", "Rack"]],
     fields: [], editable: false,
   },
   {
-    key: "expiry-alerts", navLabel: "Expiry Alerts", title: "Expiry Alerts", subtitle: "Batches ordered by expiry", table: "medicine_batches",
-    select: "id,batch_number,expiry_date,current_stock,mrp,selling_rate,rack_location,created_at",
+    key: "expiry-alerts", navLabel: "Expiry Alerts", title: "Expiry Alerts", subtitle: "In-stock batches expiring within 90 days", table: "medicine_batches",
+    select: "id,product:products(name),batch_number,expiry_date,current_stock,mrp,selling_rate,rack_location,created_at",
     orderBy: "expiry_date", ascending: true, searchColumns: ["batch_number", "rack_location"],
-    columns: [["expiry_date", "Expiry"], ["batch_number", "Batch"], ["current_stock", "Stock"], ["selling_rate", "Selling"], ["mrp", "MRP"], ["rack_location", "Rack"]],
+    columns: [["product.name", "Medicine"], ["expiry_date", "Expiry"], ["batch_number", "Batch"], ["current_stock", "Stock"], ["selling_rate", "Selling"], ["mrp", "MRP"], ["rack_location", "Rack"]],
     fields: [], editable: false,
   },
   {
@@ -346,7 +347,7 @@ export const v2Modules: ModuleConfig[] = [
     fields: [], editable: false,
   },
   {
-    key: "users-roles", navLabel: "Users & Roles", title: "Users & Roles", subtitle: "Active user profiles", table: "profiles",
+    key: "users-and-roles", navLabel: "Users & Roles", title: "Users & Roles", subtitle: "Active user profiles", table: "profiles",
     select: "id,username,full_name,role,mobile,active,created_at",
     orderBy: "full_name", ascending: true, searchColumns: ["username", "full_name", "role", "mobile"],
     columns: [["username", "Username"], ["full_name", "Name"], ["role", "Role"], ["mobile", "Mobile"], ["active", "Active"]],

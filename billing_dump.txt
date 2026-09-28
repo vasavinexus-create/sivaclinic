@@ -1,0 +1,69 @@
+function Billing({profile,organization,notify}:{profile:Profile;organization:Organization|null;notify:(s:string)=>void}){
+  const salesGstMode = organization?.sales_gst_mode || "price_plus_gst";
+  const isPriceOnly = salesGstMode === "price_only";
+  const discountPercent = Number(organization?.sales_discount_percent || 0);
+  const {rows:patients}=useRows("patients","id,patient_id,name,mobile");
+  const [patientId,setPatientId]=useState(""),[products,setProducts]=useState<Row[]>([]),[cart,setCart]=useState<Row[]>([]);
+  const [productId,setProductId]=useState(""),[qty,setQty]=useState(1),[rate,setRate]=useState(""),[rateTouched,setRateTouched]=useState(false),[editing,setEditing]=useState<number|null>(null),[pending,setPending]=useState<Row|null>(null),[saving,setSaving]=useState(false);
+  const [ratePreview,setRatePreview]=useState<Row|null>(null),[specialDiscountPercent,setSpecialDiscountPercent]=useState(0);
+  useEffect(()=>{supabase?.from("products").select("id,product_id,name,gst_percent").eq("active",true).order("name").limit(ROW_FETCH_LIMIT).then(({data})=>setProducts(data||[]))},[]);
+  useEffect(()=>{if(!patientId){setPending(null);return}supabase?.from("consultations").select("id,doctor_fee,visited_at").eq("patient_id",patientId).eq("doctor_fee_collected",false).order("visited_at",{ascending:false}).limit(1).maybeSingle().then(({data})=>setPending(data))},[patientId]);
+  useEffect(()=>{if(!patientId||!productId||Number(qty)<=0||editing!==null||!supabase){setRatePreview(null);return}let alive=true;supabase.from("medicine_batches").select("mrp,units_per_purchase_unit,sales_discount_percent,gst_percent").eq("product_id",productId).gt("current_stock",0).gte("expiry_date",todayInput()).order("expiry_date",{ascending:true}).order("created_at",{ascending:true}).limit(1).maybeSingle().then(({data})=>{if(alive&&data){const batchDiscount=data.sales_discount_percent==null?discountPercent:Number(data.sales_discount_percent),finalRate=discountedSaleRate(data.mrp,data.units_per_purchase_unit,batchDiscount),gst=Number(data.gst_percent||0),taxEach=isPriceOnly?finalRate*gst/100:finalRate-(finalRate/(1+gst/100));if(!rateTouched)setRate(String(finalRate));setRatePreview({mrp_unit_rate:roundedSaleRate(data.mrp,data.units_per_purchase_unit),sales_discount_percent:batchDiscount,final_rate:finalRate,gst_percent:gst,tax_each:taxEach,bill_rate:isPriceOnly?finalRate+taxEach:finalRate})}});return()=>{alive=false}},[patientId,productId,qty,editing,rateTouched,discountPercent,isPriceOnly]);
+  const resetEntry=()=>{setProductId("");setQty(1);setRate("");setRateTouched(false);setRatePreview(null);setEditing(null)};
+  const cancelBill=()=>{setPatientId("");setPending(null);setCart([]);setSpecialDiscountPercent(0);resetEntry()};
+  const add=async()=>{
+    const quantity=Number(qty);
+    if(!productId||quantity<=0){notify("Select medicine and enter valid quantity");return}
+    const p=products.find(x=>x.id===productId);
+    const {data:batches,error}=await supabase!.from("medicine_batches").select("id,batch_number,expiry_date,current_stock,selling_rate,mrp,gst_percent,units_per_purchase_unit,sales_discount_percent").eq("product_id",productId).gt("current_stock",0).gte("expiry_date",todayInput()).order("expiry_date",{ascending:true}).order("created_at",{ascending:true});
+    if(error||!batches?.length){notify(error?.message||"No valid FEFO stock available for this medicine");return}
+    let remaining=quantity;
+    const nextRows:Row[]=[];
+    for(const full of batches){
+      const existingQty=cart.reduce((a,x,i)=>a+(i!==editing&&x.batch_id===full.id?Number(x.qty):0),0);
+      const available=Math.max(0,Number(full.current_stock||0)-existingQty);
+      if(available<=0)continue;
+      const take=Math.min(remaining,available);
+      const batchDiscount=full.sales_discount_percent==null?discountPercent:Number(full.sales_discount_percent),mrpUnitRate=roundedSaleRate(full.mrp,full.units_per_purchase_unit),originalRate=discountedSaleRate(full.mrp,full.units_per_purchase_unit,batchDiscount),editedRate=patientId&&rateTouched?Number(rate):originalRate;
+      if(!Number.isFinite(editedRate)||editedRate<=0){notify("Enter valid rate");return}
+      nextRows.push({...p,...full,id:p!.id,batch_id:full.id,qty:take,mrp_unit_rate:mrpUnitRate,sales_discount_percent:batchDiscount,original_sales_discount_percent:batchDiscount,original_selling_rate:originalRate,selling_rate:editedRate,rate_edited:patientId&&rateTouched&&Math.abs(editedRate-originalRate)>0.001,gst_percent:full.gst_percent??p?.gst_percent??0});
+      remaining-=take;
+      if(remaining<=0)break;
+    }
+    if(remaining>0){notify(`Only ${quantity-remaining} stock available across FEFO batches`);return}
+    setCart(editing===null?[...cart,...nextRows]:[...cart.slice(0,editing),...nextRows,...cart.slice(editing+1)]);
+    resetEntry();
+  };
+  const editRow=(index:number)=>{const x=cart[index];setProductId(x.id);setQty(Number(x.qty));setRate(String(x.selling_rate));setRateTouched(false);setEditing(index)};
+  const changeCartQty=(index:number,next:number)=>{const value=Number(next);if(!Number.isFinite(value)||value<=0){notify("Quantity must be greater than 0");return}const row=cart[index];const otherQty=cart.reduce((a,x,i)=>a+(i!==index&&x.batch_id===row.batch_id?Number(x.qty):0),0);const available=Number(row.current_stock||0)-otherQty;if(value>available){notify(`Only ${available} available in this batch`);return}setCart(cart.map((x,i)=>i===index?{...x,qty:value}:x))};
+  const changeCartDiscount=(index:number,next:number)=>{const value=Number(next);if(!Number.isFinite(value)||value<0||value>100){notify("Discount must be between 0 and 100");return}setCart(cart.map((x,i)=>{if(i!==index)return x;const nextRate=discountedSaleRate(x.mrp,x.units_per_purchase_unit,value),changed=Math.abs(value-Number(x.original_sales_discount_percent||0))>0.001;return{...x,sales_discount_percent:value,selling_rate:nextRate,rate_edited:changed,original_selling_rate:x.original_selling_rate||discountedSaleRate(x.mrp,x.units_per_purchase_unit,x.original_sales_discount_percent)}}))};
+  const removeRow=(index:number)=>{setCart(cart.filter((_,i)=>i!==index));if(editing===index)resetEntry()};
+  const medicine=cart.reduce((a,x)=>a+(isPriceOnly?Number(x.selling_rate)*Number(x.qty):(Number(x.selling_rate)*Number(x.qty)/(1+Number(x.gst_percent||0)/100))),0);
+  const tax=cart.reduce((a,x)=>a+(isPriceOnly?(Number(x.selling_rate)*Number(x.qty)*Number(x.gst_percent||0)/100):(Number(x.selling_rate)*Number(x.qty)-(Number(x.selling_rate)*Number(x.qty)/(1+Number(x.gst_percent||0)/100)))),0);
+  const grossTotal=isPriceOnly?(medicine+tax+Number(pending?.doctor_fee||0)):(cart.reduce((a,x)=>a+Number(x.selling_rate)*Number(x.qty),0)+Number(pending?.doctor_fee||0));
+  const specialDiscountAmount=Number(((medicine+tax)*(Number(specialDiscountPercent||0)/100)).toFixed(2));
+  const total=Math.max(0,grossTotal-specialDiscountAmount);
+  const save=async()=>{
+    if(!cart.length){notify("Add at least one medicine before billing");return}
+    if(Number(specialDiscountPercent||0)<0||Number(specialDiscountPercent||0)>100){notify("Special discount must be between 0 and 100");return}
+    setSaving(true);
+    const invoice=`MED-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+    const hasRateEdit=cart.some(x=>x.rate_edited)||Number(specialDiscountPercent||0)>0;
+    const pharmacyRevenue=Math.max(0,medicine+tax-specialDiscountAmount);
+    const {data:sale,error}=await supabase!.from("sales").insert({organization_id:profile.organization_id,invoice_no:invoice,patient_id:patientId||null,consultation_id:pending?.id||null,medicine_subtotal:medicine,medicine_tax:tax,pharmacy_revenue:pharmacyRevenue,doctor_fee:Number(pending?.doctor_fee||0),gross_total:grossTotal,special_discount_percent:Number(specialDiscountPercent||0),special_discount_amount:specialDiscountAmount,grand_total:total,payment_mode:"cash",has_rate_edit:hasRateEdit,rate_edit_verified:!hasRateEdit,created_by:profile.id}).select("id").single();
+    if(!error&&sale){
+      for(const x of cart){
+        const balance=Number(x.current_stock)-Number(x.qty);
+        if(balance<0){notify(`${x.name} stock changed. Re-add this item.`);setSaving(false);return}
+        await supabase!.from("sale_items").insert({organization_id:profile.organization_id,sale_id:sale.id,product_id:x.id,batch_id:x.batch_id,quantity:x.qty,unit_rate:x.selling_rate,original_unit_rate:x.original_selling_rate||x.selling_rate,rate_edited:!!x.rate_edited,mrp:x.mrp,mrp_unit_rate:x.mrp_unit_rate,original_sales_discount_percent:x.original_sales_discount_percent,sales_discount_percent:x.sales_discount_percent,gst_percent:x.gst_percent,line_total:Number(x.selling_rate)*Number(x.qty)});
+        await supabase!.from("medicine_batches").update({current_stock:balance}).eq("id",x.batch_id);
+        await supabase!.from("stock_movements").insert({organization_id:profile.organization_id,product_id:x.id,batch_id:x.batch_id,movement_type:"sale",reference_type:"sale",reference_id:sale.id,reference_number:invoice,out_quantity:x.qty,balance_quantity:balance,created_by:profile.id});
+      }
+      if(pending)await supabase!.rpc("collect_consultation_fee",{p_consultation_id:pending.id,p_sale_id:sale.id});
+      await supabase!.from("payments").insert({organization_id:profile.organization_id,sale_id:sale.id,patient_id:patientId||null,amount:total,mode:"cash",created_by:profile.id});
+      await postJournal(profile,{voucherType:"sale",entryDate:new Date().toISOString(),referenceType:"sale",referenceId:sale.id,referenceNumber:invoice,narration:`Sale bill ${invoice}`,lines:[{ledger:"Cash",debit:total},{ledger:"Pharmacy Sales",credit:pharmacyRevenue},{ledger:"Doctor Fee Income",credit:Number(pending?.doctor_fee||0)}]});
+      cancelBill();
+    }
+    setSaving(false);notify(billingSchemaMessage(error?.message)||`${invoice} completed`);
+  };
+  return <><PageHead title={<>Pharmacy Billing{cart.length > 0 && <span className="billing-head-total">{money(total)}</span>}</>

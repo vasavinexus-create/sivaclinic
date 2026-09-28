@@ -14,6 +14,7 @@ export const v2WorkflowPages = new Set([
   "inpatient-ledger",
   "expiry-alerts",
   "purchase-import",
+  "adv-purchase-import",
   "product-mappings",
   "new-purchase",
   "purchase-history",
@@ -31,7 +32,7 @@ export const v2WorkflowPages = new Set([
   "balance-sheet",
   "profit-loss",
   "reports",
-  "users-roles",
+  "users-and-roles",
   "settings",
 ]);
 

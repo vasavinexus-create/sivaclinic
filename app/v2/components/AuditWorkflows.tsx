@@ -12,13 +12,14 @@ export function DeletedBillsAuditWorkflow({ profile, notify }: { profile: Profil
   const load = () => {
     if (!supabase) return;
     Promise.all([
-      supabase.from("deleted_sales_audit").select("id,invoice_no,bill_date,deleted_reason,deleted_at,audited,audited_at,deleted_by_user:profiles!deleted_sales_audit_deleted_by_fkey(full_name)").order("deleted_at", { ascending: false }).limit(100),
-      supabase.from("deleted_purchases_audit").select("id,purchase_no,supplier_invoice_no,bill_date,deleted_reason,deleted_at,audited,audited_at,deleted_by_user:profiles!deleted_purchases_audit_deleted_by_fkey(full_name)").order("deleted_at", { ascending: false }).limit(100),
-    ]).then(([s, p]) => { setSales(s.data || []); setPurchases(p.data || []); });
+      supabase.from("deleted_sales_audit").select("id,invoice_no,bill_date,deleted_reason,deleted_at,audited,audited_at,deleted_by_user:profiles!deleted_sales_audit_deleted_by_fkey(full_name)").eq("organization_id", profile.organization_id).eq("audited", false).order("deleted_at", { ascending: false }).limit(100),
+      supabase.from("deleted_purchases_audit").select("id,purchase_no,supplier_invoice_no,bill_date,deleted_reason,deleted_at,audited,audited_at,deleted_by_user:profiles!deleted_purchases_audit_deleted_by_fkey(full_name)").eq("organization_id", profile.organization_id).eq("audited", false).order("deleted_at", { ascending: false }).limit(100),
+    ]).then(([s, p]) => { if (s.error || p.error) notify(s.error?.message || p.error?.message || "Could not load audit"); setSales(s.data || []); setPurchases(p.data || []); });
   };
   useEffect(load, []);
   const mark = async (table: string, id: string) => {
     if (!supabase) return;
+    if (profile.role !== "admin") { notify("Only admin can mark bills audited"); return; }
     const { error } = await supabase.from(table).update({ audited: true, audited_at: new Date().toISOString(), audited_by: profile.id }).eq("id", id);
     notify(error?.message || "Marked audited");
     load();

@@ -6,21 +6,54 @@ import { supabase } from "../../../lib/supabase";
 import { Organization, Profile, Row } from "../lib/types";
 import { Field, FormPanel } from "./controls";
 
+import { useOrganization } from "../lib/useOrganization";
+import { mutate } from "swr";
+
 export function SettingsWorkflow({ profile, onOrganizationChange, notify }: { profile: Profile; onOrganizationChange?: (organization: Organization | null) => void; notify: (message: string) => void }) {
-  const [org, setOrg] = useState<Row | null>(null);
+  const { data: org, error: orgError } = useOrganization(profile.organization_id);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { supabase?.from("organizations").select("*").eq("id", profile.organization_id).single().then(({ data }) => setOrg(data || null)); }, [profile.organization_id]);
+
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase) return;
     const form = new FormData(event.currentTarget);
     setSaving(true);
-    const { data, error } = await supabase.from("organizations").update({ clinic_name: form.get("clinic_name"), pharmacy_name: form.get("pharmacy_name"), phone: form.get("phone"), address: form.get("address"), gst_number: form.get("gst_number"), drug_license_number: form.get("drug_license_number"), sales_gst_mode: form.get("sales_gst_mode"), sales_discount_percent: Number(form.get("sales_discount_percent") || 0), gemini_api_key: form.get("gemini_api_key"), gemini_model: form.get("gemini_model") || "gemini-3.6-flash" }).eq("id", profile.organization_id).select("id,clinic_name,pharmacy_name,sales_gst_mode,sales_discount_percent").single();
-    setSaving(false);
-    if (!error && onOrganizationChange) onOrganizationChange(data as Organization);
-    notify(error?.message || "Settings updated");
+    try {
+      const payload = {
+        clinic_name: form.get("clinic_name"),
+        pharmacy_name: form.get("pharmacy_name"),
+        phone: form.get("phone"),
+        address: form.get("address"),
+        gst_number: form.get("gst_number"),
+        drug_license_number: form.get("drug_license_number"),
+        sales_gst_mode: form.get("sales_gst_mode"),
+        sales_discount_percent: Number(form.get("sales_discount_percent") || 0),
+        gemini_api_key: form.get("gemini_api_key"),
+        groq_api_key: form.get("groq_api_key"),
+        gemini_model: form.get("gemini_model") || "gemini-3.6-flash"
+      };
+
+      const res = await fetch("/api/v2/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const result = await res.json();
+      
+      if (!res.ok) throw new Error(result.error || "Failed to save settings");
+      
+      mutate(`org:${profile.organization_id}`);
+      if (onOrganizationChange) onOrganizationChange(result.data as Organization);
+      notify("Settings updated");
+    } catch (e: any) {
+      notify(e.message || "Failed to update settings");
+    } finally {
+      setSaving(false);
+    }
   };
-  return <FormPanel title="Settings" subtitle="Native V2 clinic settings & AI configuration" onSubmit={save}><div className="form-grid"><Field name="clinic_name" label="Clinic name" required defaultValue={org?.clinic_name}/><Field name="pharmacy_name" label="Pharmacy name" defaultValue={org?.pharmacy_name}/><Field name="phone" label="Phone" defaultValue={org?.phone}/><Field name="address" label="Address" defaultValue={org?.address}/><Field name="gst_number" label="GST number" defaultValue={org?.gst_number}/><Field name="drug_license_number" label="Drug license" defaultValue={org?.drug_license_number}/><Field name="gemini_api_key" label="Gemini API Key (AI Import)" type="password" defaultValue={org?.gemini_api_key}/><label className="field"><span>Gemini model</span><select name="gemini_model" defaultValue={org?.gemini_model || "gemini-3.6-flash"}><option value="gemini-3.6-flash">Gemini 3.6 Flash</option><option value="gemini-2.5-flash">Gemini 2.5 Flash</option><option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option></select></label><label className="field"><span>Sales GST mode</span><select name="sales_gst_mode" defaultValue={org?.sales_gst_mode || "price_plus_gst"}><option value="price_plus_gst">Price + GST</option><option value="price_only">Price only</option></select></label><Field name="sales_discount_percent" label="Billing discount %" type="number" defaultValue={org?.sales_discount_percent || 0}/></div><div className="auth-message">Billing rate = MRP / retail count, rounded up, then this discount is applied when a purchase batch has no own discount.</div><div className="form-actions"><button className="primary" disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Save settings</button></div></FormPanel>;
+
+  if (orgError) return <div className="error-box">Failed to load settings</div>;
+
+  return <FormPanel title="Settings" subtitle="Native V2 clinic settings & AI configuration" onSubmit={save}><div className="form-grid"><Field name="clinic_name" label="Clinic name" required defaultValue={org?.clinic_name||""}/><Field name="pharmacy_name" label="Pharmacy name" defaultValue={org?.pharmacy_name||""}/><Field name="phone" label="Phone" defaultValue={org?.phone||""}/><Field name="address" label="Address" defaultValue={org?.address||""}/><Field name="gst_number" label="GST number" defaultValue={org?.gst_number||""}/><Field name="drug_license_number" label="Drug license" defaultValue={org?.drug_license_number||""}/><Field name="gemini_api_key" label="Gemini API Key (AI Import)" type="password" defaultValue={org?.gemini_api_key||""}/><Field name="groq_api_key" label="Groq API Key (Free Vision)" type="password" defaultValue={org?.groq_api_key||""}/><label className="field"><span>Gemini model</span><select name="gemini_model" defaultValue={org?.gemini_model || "gemini-3.6-flash"}><option value="gemini-3.6-flash">Gemini 3.6 Flash</option><option value="gemini-2.5-flash">Gemini 2.5 Flash</option><option value="gemini-3.6-flash-lite">Gemini 3.6 Flash Lite</option></select></label><label className="field"><span>Sales GST mode</span><select name="sales_gst_mode" defaultValue={org?.sales_gst_mode || "price_plus_gst"}><option value="price_plus_gst">Price + GST</option><option value="price_only">Price only</option></select></label><Field name="sales_discount_percent" label="Billing discount %" type="number" defaultValue={org?.sales_discount_percent || 0}/></div><div className="auth-message">Billing rate = MRP / retail count, rounded up, then this discount is applied when a purchase batch has no own discount.</div><div className="form-actions"><button className="primary" disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Save settings</button></div></FormPanel>;
 }
 
 export function UsersRolesWorkflow({ notify }: { notify: (message: string) => void }) {

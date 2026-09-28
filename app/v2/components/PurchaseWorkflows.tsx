@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
+import { canDeleteBill, cancelBill } from "../../../lib/bill-cancellation";
 import { money } from "../lib/format";
 import { postJournal } from "../lib/accounting";
 import { Profile, Row } from "../lib/types";
@@ -44,7 +45,7 @@ export function PurchaseWorkflow({ profile, notify }: { profile: Profile; notify
       notify("Enter batch, expiry, qty and rate");
       return;
     }
-    setItems((rows) => [...rows, { product_id: productId, product_name: product.name, product_code: product.product_id, batch_number: data.get("batch_number"), expiry_date: data.get("expiry_date"), quantity: qty, free_quantity: free, units_per_purchase_unit: units, stock_qty: (qty + free) * units, purchase_rate: rate, purchase_rate_per_unit: rate / units, sales_discount_percent: salesDiscount, selling_rate: 0, mrp: Number(data.get("mrp") || 0), gst_percent: gst, discount, line_total: lineTotal }]);
+    setItems((rows) => [...rows, { product_id: productId, product_name: product.name, product_code: product.product_id, batch_number: data.get("batch_number"), expiry_date: data.get("expiry_date"), quantity: qty, free_quantity: free, units_per_purchase_unit: units, stock_qty: (qty + free) * units, purchase_rate: rate, purchase_rate_per_unit: rate / units, sales_discount_percent: salesDiscount, selling_rate: Number(data.get("mrp") || 0) / units, mrp: Number(data.get("mrp") || 0), gst_percent: gst, discount, line_total: lineTotal }]);
     setProductId("");
     setProduct(null);
     setEntry({ units_per_purchase_unit: 1, mrp: 0, sales_discount_percent: "" });
@@ -52,34 +53,50 @@ export function PurchaseWorkflow({ profile, notify }: { profile: Profile; notify
 
   const save = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !supplierId || !items.length) {
+    if (!supplierId || !items.length) {
       notify("Select supplier and add medicines");
       return;
     }
     const form = new FormData(event.currentTarget);
     setSaving(true);
-    const purchaseNo = `VP-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
-    const invoiceDate = String(form.get("invoice_date"));
-    const amountPaid = Number(form.get("amount_paid") || 0);
-    const { data: purchase, error } = await supabase.from("purchases").insert({ organization_id: profile.organization_id, purchase_no: purchaseNo, supplier_id: supplierId, supplier_invoice_no: form.get("supplier_invoice_no"), invoice_date: invoiceDate, subtotal: total, tax_total: 0, invoice_total: total, amount_paid: amountPaid, status: "completed", created_by: profile.id }).select("id").single();
-    if (error || !purchase) {
-      setSaving(false);
-      notify(error?.message || "Purchase save failed");
-      return;
-    }
-    for (const item of items) {
-      const { data: batch } = await supabase.from("medicine_batches").insert({ organization_id: profile.organization_id, product_id: item.product_id, batch_number: item.batch_number, expiry_date: item.expiry_date, supplier_id: supplierId, purchase_id: purchase.id, quantity_received: item.stock_qty, current_stock: item.stock_qty, purchase_rate: item.purchase_rate_per_unit, mrp: item.mrp, selling_rate: item.selling_rate, sales_discount_percent: item.sales_discount_percent, gst_percent: item.gst_percent }).select("id").single();
-      if (!batch) continue;
-      await supabase.from("purchase_items").insert({ organization_id: profile.organization_id, purchase_id: purchase.id, product_id: item.product_id, batch_id: batch.id, quantity: item.quantity, free_quantity: item.free_quantity, rate: item.purchase_rate, gst_percent: item.gst_percent, discount: item.discount, line_total: item.line_total });
-      await supabase.from("stock_movements").insert({ organization_id: profile.organization_id, product_id: item.product_id, batch_id: batch.id, movement_type: "purchase", reference_type: "purchase", reference_id: purchase.id, reference_number: purchaseNo, in_quantity: item.stock_qty, balance_quantity: item.stock_qty, created_by: profile.id });
-    }
-    await supabase.from("supplier_ledger").insert({ organization_id: profile.organization_id, supplier_id: supplierId, occurred_on: invoiceDate, particulars: `Purchase bill ${purchaseNo}`, reference_type: "purchase", reference_id: purchase.id, reference_number: purchaseNo, debit: total, credit: amountPaid, created_by: profile.id });
+    
     try {
-      await postJournal(profile, { voucherType: "purchase", entryDate: invoiceDate, referenceType: "purchase", referenceId: purchase.id, referenceNumber: purchaseNo, narration: `Purchase bill ${purchaseNo}`, lines: [{ ledger: "Purchase", debit: total }, { ledger: amountPaid ? "Cash" : "Supplier Payable", credit: total }] });
-    } catch {}
-    setSaving(false);
-    setItems([]);
-    notify(`${purchaseNo} saved`);
+      const payload = {
+        supplier_id: supplierId,
+        invoice_date: String(form.get("invoice_date")),
+        invoice_number: String(form.get("supplier_invoice_no") || ""),
+        amount_paid: Number(form.get("amount_paid") || 0),
+        items: items.map(item => ({
+          product_id: item.product_id,
+          batch_number: String(item.batch_number),
+          expiry_date: String(item.expiry_date) || null,
+          qty: item.quantity,
+          free_qty: item.free_quantity,
+          mrp: item.mrp,
+          purchase_rate: item.purchase_rate,
+          selling_rate: item.selling_rate || 0,
+          sales_discount_percent: item.sales_discount_percent,
+          gst_percent: item.gst_percent,
+        }))
+      };
+
+      const res = await fetch("/api/v2/purchases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Purchase save failed");
+
+      setSaving(false);
+      setItems([]);
+      notify(`${result.purchase_no} saved`);
+      event.currentTarget.reset();
+    } catch (e: any) {
+      setSaving(false);
+      notify(e.message || "Purchase save failed");
+    }
   };
 
   return <div><div className="page-head"><div><h1>New Purchase</h1><p>Native V2 purchase workflow with batch and stock creation.</p></div></div><div className="panel"><form onSubmit={save}><div className="form-grid"><AsyncSelect table="suppliers" select="id,supplier_id,name,mobile" searchColumns={["supplier_id", "name", "mobile"]} label="Supplier" value={supplierId} onChange={setSupplierId} render={supplierText}/><Field name="supplier_invoice_no" label="Supplier invoice" required/><Field name="invoice_date" label="Invoice date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)}/><Field name="amount_paid" label="Amount paid" type="number"/></div><div className="section-label">ADD MEDICINE</div><div className="form-grid"><AsyncSelect table="products" select="id,product_id,name,mrp,default_units_per_purchase_unit" searchColumns={["product_id", "name", "barcode", "generic_name"]} label="Medicine" value={productId} onChange={(id, row) => { const units = Number(row?.default_units_per_purchase_unit || 1) || 1; const mrp = Number(row?.mrp || 0); setProductId(id); setProduct(row || null); setEntry({ units_per_purchase_unit: units, mrp, sales_discount_percent: "" }); }} render={productText}/><Field name="batch_number" label="Batch" required/><Field name="expiry_date" label="Expiry" type="date" required/><Field name="quantity" label="Qty" type="number" required/><Field name="free_quantity" label="Free" type="number"/><Field name="units_per_purchase_unit" label="Units / pack" type="number" value={entry.units_per_purchase_unit} onChange={(event) => { const units = event.currentTarget.value; setEntry((current) => ({ ...current, units_per_purchase_unit: units })); }}/><Field name="purchase_rate" label="Purchase rate / pack" type="number" required/><Field name="discount" label="Discount" type="number"/><Field name="gst_percent" label="GST %" type="number"/><Field name="mrp" label="MRP" type="number" value={entry.mrp} onChange={(event) => { const mrp = event.currentTarget.value; setEntry((current) => ({ ...current, mrp })); }}/><Field name="sales_discount_percent" label="Discount %" type="number" value={entry.sales_discount_percent} onChange={(event) => setEntry((current) => ({ ...current, sales_discount_percent: event.currentTarget.value }))}/></div><button type="button" className="secondary" onClick={(event) => addItem((event.currentTarget.form as HTMLFormElement))}><Plus size={16}/> Add medicine</button>{items.length > 0 && <div className="data-wrap"><table className="data-table"><thead><tr><th>Medicine</th><th>Batch</th><th>Stock</th><th>Rate</th><th>Total</th><th></th></tr></thead><tbody>{items.map((item, index) => <tr key={`${item.product_id}-${index}`}><td>{item.product_name}</td><td>{item.batch_number}</td><td>{item.stock_qty}</td><td>{money(item.purchase_rate)}</td><td>{money(item.line_total)}</td><td><button type="button" className="table-edit danger-btn" onClick={() => setItems((rows) => rows.filter((_, i) => i !== index))}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div>}<div className="checkout"><strong>Total {money(total)}</strong><button className="primary" disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Save purchase</button></div></form></div></div>;
@@ -95,30 +112,15 @@ export function PurchaseHistoryWorkflow({ profile, notify }: { profile: Profile;
   };
   useEffect(load, []);
   const cancel = async (row: Row) => {
-    if (!supabase || row.status === "cancelled") return;
-    for (const item of row.purchase_items || []) {
-      const qty = Number(item.quantity || 0) + Number(item.free_quantity || 0);
-      if (Number(item.batch?.current_stock || 0) < qty) {
-        notify(`Cannot cancel ${row.purchase_no}: stock from ${item.product?.name || "item"} already sold`);
-        return;
-      }
-    }
-    const reason = window.prompt(`Reason for deleting purchase ${row.purchase_no}`) || "";
-    const { error: auditError } = await supabase.from("deleted_purchases_audit").insert({ organization_id: profile.organization_id, purchase_id: row.id, purchase_no: row.purchase_no, supplier_invoice_no: row.supplier_invoice_no, bill_date: row.invoice_date, deleted_reason: reason, bill_snapshot: row, deleted_by: profile.id });
-    if (auditError) {
-      notify(auditError.message);
-      return;
-    }
-    for (const item of row.purchase_items || []) {
-      const qty = Number(item.quantity || 0) + Number(item.free_quantity || 0);
-      const balance = Number(item.batch?.current_stock || 0) - qty;
-      await supabase.from("medicine_batches").update({ current_stock: balance }).eq("id", item.batch_id);
-      await supabase.from("stock_movements").insert({ organization_id: profile.organization_id, product_id: item.product_id, batch_id: item.batch_id, movement_type: "adjustment_out", reference_type: "purchase_delete", reference_id: row.id, reference_number: row.purchase_no, out_quantity: qty, balance_quantity: balance, created_by: profile.id });
-    }
-    try { await postJournal(profile, { voucherType: "purchase_cancel", entryDate: new Date().toISOString(), referenceType: "purchase_delete", referenceId: row.id, referenceNumber: row.purchase_no, narration: `Cancelled purchase bill ${row.purchase_no}`, lines: [{ ledger: "Supplier Payable", debit: Number(row.balance_payable || 0) }, { ledger: "Cash", debit: Number(row.amount_paid || 0) }, { ledger: "Inventory Stock", credit: Number(row.invoice_total || 0) }] }); } catch {}
-    const { error } = await supabase.from("purchases").update({ status: "cancelled" }).eq("id", row.id);
-    notify(error?.message || `${row.purchase_no} cancelled and audited`);
-    load();
+    if (!canDeleteBill(profile.role, row.invoice_date, row.status)) { notify("Only admin can delete bills from another day"); return; }
+    const reason = window.prompt(`Reason for deleting purchase ${row.purchase_no}`);
+    if (reason === null) return;
+    try {
+      await cancelBill("purchase", row.id, reason);
+      notify(`${row.purchase_no} cancelled; stock and accounts corrected. Pending admin audit.`);
+      load();
+    } catch (error) { notify(error instanceof Error ? error.message : "Bill cancellation failed"); }
   };
-  return <div><div className="page-head"><div><h1>Purchase History</h1><p>Native V2 purchase history with cancellation audit.</p></div></div><div className="panel">{loading ? <div className="loading-panel">Loading purchases...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Purchase</th><th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.purchase_no}</td><td>{row.invoice_date}</td><td>{row.supplier?.name}</td><td>{row.supplier_invoice_no}</td><td>{money(row.invoice_total)}</td><td>{money(row.amount_paid)}</td><td>{money(row.balance_payable)}</td><td>{row.status}</td><td>{row.status !== "cancelled" ? <button className="table-edit danger-btn" onClick={() => cancel(row)}><Trash2 size={14}/> Cancel</button> : "-"}</td></tr>)}</tbody></table></div> : <div className="empty"><h3>No purchases found.</h3><p>Purchase bills will appear here.</p></div>}</div></div>;
+
+  return <div><div className="page-head"><div><h1>Purchase History</h1><p>Native V2 purchase history with cancellation audit.</p></div></div><div className="panel">{loading ? <div className="loading-panel">Loading purchases...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Purchase</th><th>Date</th><th>Supplier</th><th>Invoice</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.purchase_no}</td><td>{row.invoice_date}</td><td>{row.supplier?.name}</td><td>{row.supplier_invoice_no}</td><td>{money(row.invoice_total)}</td><td>{money(row.amount_paid)}</td><td>{money(row.status === "cancelled" ? 0 : row.balance_payable)}</td><td>{row.status}</td><td>{canDeleteBill(profile.role, row.invoice_date, row.status) ? <button className="table-edit danger-btn" onClick={() => cancel(row)}><Trash2 size={14}/> Cancel</button> : "-"}</td></tr>)}</tbody></table></div> : <div className="empty"><h3>No purchases found.</h3><p>Purchase bills will appear here.</p></div>}</div></div>;
 }

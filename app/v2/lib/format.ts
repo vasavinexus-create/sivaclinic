@@ -1,14 +1,10 @@
-export function money(value: any) {
-  const num = Number(value || 0);
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(num);
+export function money(n: any) {
+  return `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 }
 
-export function fmtDate(value: any) {
-  if (!value) return "-";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleDateString("en-IN");
+export function fmtDate(v: any) {
+  return v ? new Date(v).toLocaleDateString("en-IN") : "—";
 }
-
-export function nextCode(prefix: string) {
-  return `${prefix}-${Date.now().toString().slice(-6)}`;
+export function nextCode(prefix: string = "") {
+  return prefix + Math.floor(10000 + Math.random() * 90000).toString();
 }
