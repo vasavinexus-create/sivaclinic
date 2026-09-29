@@ -140,8 +140,8 @@ const PAGE_REGISTRY: Record<string, any> = {
 };
 
 const accountReportPages = new Set([
-  "day-book", "cash-ledger", "sales-account", "ledger-statement",
-  "current-balance", "balance-sheet", "profit-loss", "reports"
+  "day-book", "cash-book", "bank-book", "sales-report", "purchase-report", "expense-report", "ledger-report", "trial-balance",
+  "current-balance", "balance-sheet", "profit-loss", "receivables-report", "payables-report", "gst-report", "outstanding-report", "reports", "cash-ledger", "sales-account", "ledger-statement"
 ]);
 
 // ─── Main App ─────────────────────────────────────────────────────────────

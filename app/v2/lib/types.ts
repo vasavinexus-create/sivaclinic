@@ -338,5 +338,6 @@ export type ModuleConfig = {
   fields: FieldConfig[];
   filters?: ListFilter[];
   editable?: boolean;
+  selectable?: boolean;
   organizationColumn?: string | null;
 };

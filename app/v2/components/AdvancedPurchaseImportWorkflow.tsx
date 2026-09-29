@@ -1039,7 +1039,8 @@ const stitchImages = async (files: File[]): Promise<string> => {
               No saved drafts found. Click "New Import" to start extracting a purchase bill.
             </div>
           ) : (
-            <table className="table">
+            <div className="crud-table-wrap" style={{ overflowX: "auto" }}>
+            <table className="data-table">
               <thead>
                 <tr>
                   <th>Date Started</th>
@@ -1073,8 +1074,7 @@ const stitchImages = async (files: File[]): Promise<string> => {
                   </tr>
                 ))}
               </tbody>
-            </table>
-          )}
+            </table></div>)}
         </div>
       )}
 

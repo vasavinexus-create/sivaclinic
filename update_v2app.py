@@ -1,19 +1,14 @@
 # -*- coding: utf-8 -*-
 import codecs
 
-path = 'app/v2/V2App.tsx'
-with codecs.open(path, 'r', 'utf-8') as f:
+with codecs.open('app/v2/V2App.tsx', 'r', 'utf-8') as f:
     code = f.read()
 
-# Import it
-import_statement = "import { BillingWorkflow, InpatientBillingWorkflow, InpatientLedgerWorkflow } from \"./components/PharmacyWorkflows\";"
-code = code.replace("import { BillingWorkflow, InpatientBillingWorkflow } from \"./components/PharmacyWorkflows\";", import_statement)
+code = code.replace(
+    'const accountReportPages = new Set([\n    "day-book", "cash-ledger", "sales-account", "ledger-statement",\n    "current-balance", "balance-sheet", "profit-loss", "reports"\n  ]);',
+    'const accountReportPages = new Set([\n    "day-book", "cash-book", "bank-book", "sales-report", "purchase-report", "expense-report", "ledger-report", "trial-balance",\n    "current-balance", "balance-sheet", "profit-loss", "receivables-report", "payables-report", "gst-report", "outstanding-report", "reports", "cash-ledger", "sales-account", "ledger-statement"\n  ]);'
+)
 
-# Add to PAGE_REGISTRY
-registry_addition = """const PAGE_REGISTRY: Record<string, any> = {
-  "inpatient-ledger":       InpatientLedgerWorkflow,"""
-code = code.replace("const PAGE_REGISTRY: Record<string, any> = {", registry_addition)
-
-with codecs.open(path, 'w', 'utf-8') as f:
+with codecs.open('app/v2/V2App.tsx', 'w', 'utf-8') as f:
     f.write(code)
-print("Updated V2App.tsx")
+print('Updated V2App accountReportPages')

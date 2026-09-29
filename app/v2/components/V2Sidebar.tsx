@@ -40,17 +40,27 @@ const icons: Record<string, any> = {
   "supplier-payments": CreditCard,
   "supplier-ledger": Wallet,
   "deleted-bills-audit": ShieldCheck,
-  "day-book": FileText,
-  "cash-ledger": Wallet,
-  "sales-account": CircleDollarSign,
+  
   "expense-entry": CreditCard,
   "ledger-creation": ClipboardPlus,
-  "ledger-statement": FileText,
   "ledger-group": Boxes,
-  "current-balance": Wallet,
-  "balance-sheet": TrendingUp,
+  
+  "day-book": FileText,
+  "cash-book": Wallet,
+  "bank-book": Wallet,
+  "ledger-report": FileText,
+  "trial-balance": TrendingUp,
   "profit-loss": IndianRupee,
-  reports: TrendingUp,
+  "balance-sheet": TrendingUp,
+  "current-balance": Wallet,
+  "receivables-report": CircleDollarSign,
+  "payables-report": CreditCard,
+  "outstanding-report": AlertTriangle,
+  "expense-report": CreditCard,
+  "purchase-report": ShoppingCart,
+  "sales-report": CircleDollarSign,
+  "gst-report": FileText,
+  
   "users-and-roles": ShieldCheck,
   settings: Settings,
 };
@@ -92,8 +102,7 @@ const V2Sidebar = React.memo(function V2Sidebar({
             </Link>
           );
         })}
-        <p className="nav-title">CURRENT APP</p>
-        <a className="nav-item" href="/">Open existing app</a>
+        
       </nav>
       <div className="sidebar-user">
         <div className="avatar">{profile.full_name.slice(0, 2).toUpperCase()}</div>
