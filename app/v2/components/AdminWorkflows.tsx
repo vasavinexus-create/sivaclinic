@@ -70,3 +70,25 @@ export function UsersRolesWorkflow({ notify }: { notify: (message: string) => vo
   };
   return <FormPanel title="Users & Roles" subtitle="Native V2 login creation; detailed permissions remain in register page" onSubmit={save}><div className="form-grid"><Field name="full_name" label="Full name" required/><Field name="username" label="Username" required/><Field name="password" label="Password" type="password" required/><label className="field"><span>Role <b>*</b></span><select name="role" required defaultValue="doctor"><option value="admin">admin</option><option value="doctor">doctor</option><option value="receptionist">receptionist</option><option value="pharmacist">pharmacist</option><option value="accountant">accountant</option><option value="store_manager">store_manager</option></select></label></div><div className="form-actions"><button className="primary" disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Create login</button></div></FormPanel>;
 }
+
+
+export function ClinicManagementWorkflow({ notify }: { notify: (message: string) => void }) {
+  const [saving, setSaving] = useState(false);
+  const save = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!supabase) return;
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
+    const { error } = await supabase.rpc("create_clinic_with_admin", {
+      p_clinic_name: form.get("clinic_name"),
+      p_admin_email: form.get("admin_email"),
+      p_admin_name: form.get("admin_name"),
+      p_phone: form.get("phone") || null
+    });
+    setSaving(false);
+    if (error) { notify(error.message); return; }
+    notify("Clinic created and admin login invite saved");
+    event.currentTarget.reset();
+  };
+  return <FormPanel title="Clinic Management" subtitle="Software owner area for creating clinics and first admin logins" onSubmit={save}><div className="form-grid"><Field name="clinic_name" label="Hospital / clinic name" required/><Field name="phone" label="Phone"/><Field name="admin_name" label="Clinic admin name" required/><Field name="admin_email" label="Clinic admin email" type="email" required/></div><div className="form-actions"><button className="primary" disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Create clinic</button></div></FormPanel>;
+}

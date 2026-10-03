@@ -83,7 +83,7 @@ export function DoctorFeesPendingWorkflow({ profile, notify }: { profile: Profil
       <div className="page-head">
         <div><h1>{module.title}</h1><p>{module.subtitle}</p></div>
       </div>
-      <div className="panel data-view">
+      <div className="panel data-view doctor-fees-page">
         <div className="data-toolbar">
           <div className="search-box">
             <Search size={16} />
@@ -109,9 +109,10 @@ export function DoctorFeesPendingWorkflow({ profile, notify }: { profile: Profil
                 <tr key={row.id}>
                   {module.columns.map(([key]) => {
                     const val = key.split(".").reduce((v: any, p) => v?.[p], row);
-                    return <td key={key}>{key.includes("date") || key.includes("_at") ? fmtDate(val) : key.includes("fee") ? money(val) : String(val ?? "-")}</td>;
+                    const label = module.columns.find(([columnKey]) => columnKey === key)?.[1] || key;
+                    return <td key={key} data-label={label}>{key.includes("date") || key.includes("_at") ? fmtDate(val) : key.includes("fee") ? money(val) : String(val ?? "-")}</td>;
                   })}
-                  <td>
+                  <td data-label="Action">
                     <button
                       className="primary"
                       style={{ padding: "4px 12px", fontSize: 13 }}

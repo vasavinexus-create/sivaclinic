@@ -69,7 +69,7 @@ export function MedicineSalesWorkflow({ profile }: { profile: Profile }) {
   const totalQty = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
   const totalAmount = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
 
-  return <div>
+  return <div className="medicine-sales-page">
     <div className="page-head"><div><h1>Medicine Sales</h1><p>Medicine-wise quantity, average rate and sale amount for the selected date range.</p></div></div>
     <div className="panel">
       <div className="v2-toolbar">
@@ -79,7 +79,7 @@ export function MedicineSalesWorkflow({ profile }: { profile: Profile }) {
         <button type="button" className="secondary" onClick={() => setProductId("")}><X size={15}/> Clear</button>
       </div>
       <section className="summary-strip"><div className="panel summary-card"><span>Medicines sold</span><strong>{rows.length}</strong><small>{productId ? "Selected medicine" : "Unique medicines"}</small></div><div className="panel summary-card"><span>Total quantity</span><strong>{totalQty}</strong><small>Units sold</small></div><div className="panel summary-card"><span>Total sale</span><strong>{money(totalAmount)}</strong><small>Before doctor fee</small></div></section>
-      {error ? <div className="error-box">{error}</div> : loading ? <div className="loading-panel">Loading from database...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Medicine ID</th><th>Medicine</th><th>Qty sold</th><th>Average rate</th><th>Total amount</th></tr></thead><tbody>{rows.map((row) => <tr key={row.product_id}><td>{row.product_id}</td><td>{row.medicine}</td><td>{row.quantity}</td><td>{money(row.average_rate)}</td><td>{money(row.amount)}</td></tr>)}</tbody></table></div> : <div className="empty"><h3>No medicine sales found.</h3><p>Try another date range or clear filter.</p></div>}
+      {error ? <div className="error-box">{error}</div> : loading ? <div className="loading-panel">Loading from database...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Medicine ID</th><th>Medicine</th><th>Qty sold</th><th>Average rate</th><th>Total amount</th></tr></thead><tbody>{rows.map((row) => <tr key={row.product_id}><td data-label="Medicine ID">{row.product_id}</td><td data-label="Medicine">{row.medicine}</td><td data-label="Qty sold">{row.quantity}</td><td data-label="Average rate">{money(row.average_rate)}</td><td data-label="Total amount">{money(row.amount)}</td></tr>)}</tbody></table></div> : <div className="empty"><h3>No medicine sales found.</h3><p>Try another date range or clear filter.</p></div>}
     </div>
   </div>;
 }

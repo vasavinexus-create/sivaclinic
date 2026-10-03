@@ -1,5 +1,7 @@
 "use client";
 
+import { Capacitor } from "@capacitor/core";
+
 import { useEffect, useState } from "react";
 import { CheckCircle2, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
@@ -196,16 +198,24 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
     setQty(1);
   };
 
-  const changeQty = (index: number, next: number) => {
+  const changeQty = (index: number, next: any) => {
+    if (next === "") {
+      setCart((items) => items.map((item, i) => i !== index ? item : { ...item, qty: "" }));
+      return;
+    }
     const value = Number(next);
-    if (!Number.isFinite(value) || value < 1) {
-      notify("Quantity must be at least 1");
+    if (!Number.isFinite(value) || value < 0) {
+      notify("Quantity must be positive");
       return;
     }
     setCart((items) => items.map((item, i) => i !== index ? item : { ...item, qty: value }));
   };
 
-  const changeDiscount = (index: number, next: number) => {
+  const changeDiscount = (index: number, next: any) => {
+    if (next === "") {
+      setCart((items) => items.map((item, i) => i !== index ? item : { ...item, sales_discount_percent: "" }));
+      return;
+    }
     const value = Number(next);
     if (!Number.isFinite(value) || value < 0 || value > 100) {
       notify("Discount must be between 0 and 100");
@@ -222,6 +232,10 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
   const save = async () => {
     if (!supabase || !cart.length) {
       notify("Add at least one medicine");
+      return;
+    }
+    if (cart.some((item) => !item.qty || Number(item.qty) <= 0)) {
+      notify("Please fill out valid quantities for all medicines");
       return;
     }
     if (Number(specialDiscountPercent || 0) < 0 || Number(specialDiscountPercent || 0) > 100) {
@@ -300,18 +314,18 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
     notify(`${invoice} saved`);
   };
 
-  return <div><PrintableInvoice organization={organization} patientName={product ? "Patient" : ""} patientId={patientId} mobile={""} invoiceNo={""} date={""} cart={cart} medicine={medicine} tax={tax} specialDiscountAmount={specialDiscountAmount} total={total} pendingFee={pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0)} title="PHARMACY INVOICE" /><div className="no-print"><div className="page-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><div><h1>Billing {cart.length > 0 && <span className="billing-head-total">{money(total)}</span>}</h1><p>Native V2 pharmacy billing with FEFO stock deduction.</p></div>
+  return <div><PrintableInvoice organization={organization} patientName={product ? "Patient" : ""} patientId={patientId} mobile={""} invoiceNo={""} date={""} cart={cart} medicine={medicine} tax={tax} specialDiscountAmount={specialDiscountAmount} total={total} pendingFee={pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0)} title="PHARMACY INVOICE" /><div className="no-print"><div className="page-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><div><h1>Billing {cart.length > 0 && <span className="billing-head-total">{money(total)}</span>}</h1></div>
     <div className="print-hide" style={{ display: 'flex', gap: '10px' }}>
-      <button className="secondary" onClick={() => window.print()} style={{ minHeight: '38px' }}>
+      <button className="secondary" onClick={() => (typeof Capacitor !== "undefined" && Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print())} style={{ minHeight: '38px' }}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '6px'}}><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
         Print
       </button>
-      <button className="secondary" onClick={() => { alert("In the print dialog, select 'Save as PDF' as your printer."); window.print(); }} style={{ minHeight: '38px' }}>
+      <button className="secondary" onClick={() => { alert("In the print dialog, select 'Save as PDF' as your printer."); (typeof Capacitor !== "undefined" && Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print()); }} style={{ minHeight: '38px' }}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '6px'}}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
         PDF Export
       </button>
     </div>
-  </div><div className="panel billing-panel"><div className="billing-patient-line" style={{ marginBottom: "20px" }}><AsyncSelect table="patients" select="id,patient_id,name,mobile" searchColumns={["patient_id", "name", "mobile"]} label="Patient / walk-in" value={patientId} onChange={setPatientId} render={patientText}/></div><div className="billing-entry-line"><AsyncSelect table="products" select="id,product_id,name,gst_percent" searchColumns={["product_id", "name", "barcode", "generic_name"]} label="Medicine" value={productId} onChange={(id, row) => { setProductId(id); setProduct(row || null); setRatePreview(null); }} render={productText}/><label className="field qty-field"><span>Quantity</span><input type="number" min="1" step="1" value={qty} onChange={(event) => setQty(Number(event.currentTarget.value))}/></label><button type="button" className="primary" onClick={add}><Plus size={16}/> Add</button></div>{ratePreview && <div className="auth-message stock-preview">MRP rate: <b>{money(ratePreview.mrp_unit_rate)}</b> · Discount: <b>{Number(ratePreview.sales_discount_percent || 0)}%</b> · Final rate: <b>{money(ratePreview.final_rate)}</b> · GST: <b>{Number(ratePreview.gst_percent || 0)}% / {money(ratePreview.tax_each)}</b> · Billing rate: <b>{money(ratePreview.bill_rate)}</b></div>}{cart.length ? <><div className="data-wrap"><table className="data-table billing-table"><thead><tr><th className="col-med">Medicine</th><th className="col-batch">Batch</th><th className="col-qty">Qty</th><th className="col-rate">MRP rate</th><th className="col-rate">Discount %</th><th className="col-rate">Final rate</th><th className="col-gst">GST</th><th className="col-total">Total</th><th className="col-action"></th></tr></thead><tbody>{cart.map((item, index) => <tr key={`${item.batch_id}-${index}`} className="cart-row-interactive"><td className="col-med"><strong>{item.name}</strong></td><td className="col-batch">{item.batch_number}</td><td className="col-qty"><input className="table-qty-input" type="number" min="1" step="1" value={item.qty} onChange={(event) => changeQty(index, Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.mrp_unit_rate)}</td><td className="col-rate"><input className="table-qty-input" type="number" min="0" max="100" step="0.01" value={item.sales_discount_percent ?? 0} onChange={(event) => changeDiscount(index, Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.selling_rate)}</td><td className="col-gst">{Number(item.gst_percent || 0)}%</td><td className="col-total"><strong>{money(Number(item.selling_rate) * Number(item.qty))}</strong></td><td className="col-action"><button className="table-edit danger-btn" onClick={() => setCart((items) => items.filter((_, i) => i !== index))}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div><div className="checkout sales-checkout"><label className="field qty-field special-discount-field"><span>Additional special discount %</span><input type="number" min="0" max="100" step="0.01" value={specialDiscountPercent} onChange={(event) => setSpecialDiscountPercent(Number(event.currentTarget.value))}/></label>{pending.length > 0 && <div className="fee-banner auth-message" style={{ marginBottom: "16px", background: "#fff5f5", color: "#c53030", padding: "12px", borderRadius: "8px", border: "1px solid #fed7d7" }}>Pending doctor fee ({pending.length}) will be collected: <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></div>}<div className="totals-mini"><span>Medicine <b>{money(medicine)}</b></span><span>Tax <b>{money(tax)}</b></span>{Number(specialDiscountPercent || 0) > 0 && <span>Special discount <b>-{money(specialDiscountAmount)}</b></span>}{pending.length > 0 && <span>Doctor fee <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></span>}<strong>Grand total <b>{money(total + pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></strong></div><button className="primary" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Complete sale</button></div></> : <div className="empty"><h3>No medicines added.</h3><p>Select medicine and add quantity.</p></div>}</div></div></div>;
+  </div><div className="panel billing-panel"><div className="billing-patient-line" style={{ marginBottom: "20px" }}><AsyncSelect table="patients" select="id,patient_id,name,mobile" searchColumns={["patient_id", "name", "mobile"]} label="Patient / walk-in" value={patientId} onChange={setPatientId} render={patientText}/></div><div className="billing-entry-line"><AsyncSelect table="products" select="id,product_id,name,gst_percent" searchColumns={["product_id", "name", "barcode", "generic_name"]} label="Medicine" value={productId} onChange={(id, row) => { setProductId(id); setProduct(row || null); setRatePreview(null); }} render={productText}/><label className="field qty-field"><span>Quantity</span><input type="number" min="1" step="1" value={qty} onChange={(event) => setQty(Number(event.currentTarget.value))}/></label><button type="button" className="primary" onClick={add}><Plus size={16}/> Add</button></div>{ratePreview && <div className="auth-message stock-preview">MRP rate: <b>{money(ratePreview.mrp_unit_rate)}</b> · Discount: <b>{Number(ratePreview.sales_discount_percent || 0)}%</b> · Final rate: <b>{money(ratePreview.final_rate)}</b> · GST: <b>{Number(ratePreview.gst_percent || 0)}% / {money(ratePreview.tax_each)}</b> · Billing rate: <b>{money(ratePreview.bill_rate)}</b></div>}{cart.length ? <><div className="data-wrap"><table className="data-table billing-table"><thead><tr><th className="col-med">Medicine</th><th className="col-batch">Batch</th><th className="col-qty">Qty</th><th className="col-rate">MRP rate</th><th className="col-rate">Discount %</th><th className="col-rate">Final rate</th><th className="col-gst">GST</th><th className="col-total">Total</th><th className="col-action"></th></tr></thead><tbody>{cart.map((item, index) => <tr key={`${item.batch_id}-${index}`} className="cart-row-interactive"><td className="col-med"><strong>{item.name}</strong></td><td className="col-batch">{item.batch_number}</td><td className="col-qty"><input className="table-qty-input" type="number" min="1" step="1" value={item.qty} onChange={(event) => changeQty(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.mrp_unit_rate)}</td><td className="col-rate"><input className="table-qty-input" type="number" min="0" max="100" step="0.01" value={item.sales_discount_percent ?? 0} onChange={(event) => changeDiscount(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.selling_rate)}</td><td className="col-gst">{Number(item.gst_percent || 0)}%</td><td className="col-total"><strong>{money(Number(item.selling_rate) * Number(item.qty))}</strong></td><td className="col-action"><button className="table-edit danger-btn" onClick={() => setCart((items) => items.filter((_, i) => i !== index))}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div><div className="checkout sales-checkout"><label className="field qty-field special-discount-field"><span>Additional special discount %</span><input type="number" min="0" max="100" step="0.01" value={specialDiscountPercent} onChange={(event) => setSpecialDiscountPercent(Number(event.currentTarget.value))}/></label>{pending.length > 0 && <div className="fee-banner auth-message" style={{ marginBottom: "16px", background: "#fff5f5", color: "#c53030", padding: "12px", borderRadius: "8px", border: "1px solid #fed7d7" }}>Pending doctor fee ({pending.length}) will be collected: <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></div>}<div className="totals-mini"><span>Medicine <b>{money(medicine)}</b></span><span>Tax <b>{money(tax)}</b></span>{Number(specialDiscountPercent || 0) > 0 && <span>Special discount <b>-{money(specialDiscountAmount)}</b></span>}{pending.length > 0 && <span>Doctor fee <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></span>}<strong>Grand total <b>{money(total + pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></strong></div><button className="primary" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Complete sale</button></div></> : <div className="empty"><h3>No medicines added.</h3><p>Select medicine and add quantity.</p></div>}</div></div></div>;
 }
 
 export function SalesWorkflow({ profile, notify }: { profile: Profile; notify: (message: string) => void }) {
@@ -394,21 +408,34 @@ export function InpatientBillingWorkflow({ profile, organization, notify }: { pr
     setQty(1);
   };
 
-  const changeQty = (index: number, next: number) => {
-    setCart((items) => items.map((item, i) => i === index ? { ...item, qty: Math.max(1, next) } : item));
+  const changeQty = (index: number, next: any) => {
+    if (next === "") {
+      setCart((items) => items.map((item, i) => i === index ? { ...item, qty: "" } : item));
+      return;
+    }
+    setCart((items) => items.map((item, i) => i === index ? { ...item, qty: Math.max(0, Number(next)) } : item));
   };
-  const changeDiscount = (index: number, value: number) => {
+  const changeDiscount = (index: number, value: any) => {
+    if (value === "") {
+      setCart((items) => items.map((item, i) => i === index ? { ...item, sales_discount_percent: "" } : item));
+      return;
+    }
+    const numericValue = Number(value);
     setCart((items) => items.map((item, i) => {
       if (i !== index) return item;
-      const sellingRate = discountedSaleRate(item.mrp_unit_rate || item.selling_rate, 1, value);
-      const changed = Math.abs(value - Number(item.original_sales_discount_percent || 0)) > 0.001;
-      return { ...item, sales_discount_percent: value, selling_rate: sellingRate, rate_edited: changed };
+      const sellingRate = discountedSaleRate(item.mrp_unit_rate || item.selling_rate, 1, numericValue);
+      const changed = Math.abs(numericValue - Number(item.original_sales_discount_percent || 0)) > 0.001;
+      return { ...item, sales_discount_percent: numericValue, selling_rate: sellingRate, rate_edited: changed };
     }));
   };
 
   const save = async () => {
     if (!supabase || !patientId || !cart.length) {
       notify("Select inpatient and add medicines");
+      return;
+    }
+    if (cart.some((item) => !item.qty || Number(item.qty) <= 0)) {
+      notify("Please fill out valid quantities for all medicines");
       return;
     }
     if (Number(specialDiscountPercent || 0) < 0 || Number(specialDiscountPercent || 0) > 100) {
@@ -489,11 +516,11 @@ export function InpatientBillingWorkflow({ profile, organization, notify }: { pr
 
   return <div><PrintableInvoice organization={organization} patientName={""} patientId={patientId} mobile={""} invoiceNo={""} date={""} cart={cart} medicine={medicine} tax={tax} specialDiscountAmount={specialDiscountAmount} total={total} pendingFee={0} title="INPATIENT BILLING" /><div className="no-print"><div className="page-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><div><h1>Inpatient Billing</h1><p>Credit billing charged to patient ledger.</p></div>
     <div className="print-hide" style={{ display: 'flex', gap: '10px' }}>
-      <button className="secondary" onClick={() => window.print()} style={{ minHeight: '38px' }}>
+      <button className="secondary" onClick={() => (typeof Capacitor !== "undefined" && Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print())} style={{ minHeight: '38px' }}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '6px'}}><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
         Print
       </button>
-      <button className="secondary" onClick={() => { alert("In the print dialog, select 'Save as PDF' as your printer."); window.print(); }} style={{ minHeight: '38px' }}>
+      <button className="secondary" onClick={() => { alert("In the print dialog, select 'Save as PDF' as your printer."); (typeof Capacitor !== "undefined" && Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print()); }} style={{ minHeight: '38px' }}>
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '6px'}}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
         PDF Export
       </button>
@@ -516,7 +543,7 @@ export function InpatientBillingWorkflow({ profile, organization, notify }: { pr
     
     {ratePreview && <div className="auth-message stock-preview">MRP rate: <b>{money(ratePreview.mrp_unit_rate)}</b>  Discount: <b>{Number(ratePreview.sales_discount_percent || 0)}%</b>  Final rate: <b>{money(ratePreview.final_rate)}</b>  GST: <b>{Number(ratePreview.gst_percent || 0)}% / {money(ratePreview.tax_each)}</b>  Billing rate: <b>{money(ratePreview.bill_rate)}</b></div>}
     
-    {cart.length ? <><div className="data-wrap"><table className="data-table billing-table"><thead><tr><th className="col-med">Medicine</th><th className="col-batch">Batch</th><th className="col-qty">Qty</th><th className="col-rate">MRP rate</th><th className="col-rate">Discount %</th><th className="col-rate">Final rate</th><th className="col-gst">GST</th><th className="col-total">Total</th><th className="col-action"></th></tr></thead><tbody>{cart.map((item, index) => <tr key={`${item.batch_id}-${index}`} className="cart-row-interactive"><td className="col-med"><strong>{item.name}</strong></td><td className="col-batch">{item.batch_number}</td><td className="col-qty"><input className="table-qty-input" type="number" min="1" step="1" value={item.qty} onChange={(event) => changeQty(index, Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.mrp_unit_rate)}</td><td className="col-rate"><input className="table-qty-input" type="number" min="0" max="100" step="0.01" value={item.sales_discount_percent ?? 0} onChange={(event) => changeDiscount(index, Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.selling_rate)}</td><td className="col-gst">{Number(item.gst_percent || 0)}%</td><td className="col-total"><strong>{money(Number(item.selling_rate) * Number(item.qty))}</strong></td><td className="col-action"><button className="table-edit danger-btn" onClick={() => setCart((items) => items.filter((_, i) => i !== index))}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div>
+    {cart.length ? <><div className="data-wrap"><table className="data-table billing-table"><thead><tr><th className="col-med">Medicine</th><th className="col-batch">Batch</th><th className="col-qty">Qty</th><th className="col-rate">MRP rate</th><th className="col-rate">Discount %</th><th className="col-rate">Final rate</th><th className="col-gst">GST</th><th className="col-total">Total</th><th className="col-action"></th></tr></thead><tbody>{cart.map((item, index) => <tr key={`${item.batch_id}-${index}`} className="cart-row-interactive"><td className="col-med"><strong>{item.name}</strong></td><td className="col-batch">{item.batch_number}</td><td className="col-qty"><input className="table-qty-input" type="number" min="1" step="1" value={item.qty} onChange={(event) => changeQty(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.mrp_unit_rate)}</td><td className="col-rate"><input className="table-qty-input" type="number" min="0" max="100" step="0.01" value={item.sales_discount_percent ?? 0} onChange={(event) => changeDiscount(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.selling_rate)}</td><td className="col-gst">{Number(item.gst_percent || 0)}%</td><td className="col-total"><strong>{money(Number(item.selling_rate) * Number(item.qty))}</strong></td><td className="col-action"><button className="table-edit danger-btn" onClick={() => setCart((items) => items.filter((_, i) => i !== index))}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div>
     <div className="checkout sales-checkout">
       <div className="discount-wrap">
         <label>Special Discount %</label>

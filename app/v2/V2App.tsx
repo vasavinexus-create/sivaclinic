@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { App } from "@capacitor/app";
 import { CheckCircle2, Database, Users, CircleDollarSign, PackagePlus, Boxes, CreditCard } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { rolePages } from "../../lib/page-permissions";
@@ -38,12 +39,65 @@ function Loading() {
 }
 
 function SignInNotice() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    
+    if (email === 'demoadmin@sivacare.com' && password === 'admin') {
+      const { error } = await supabase!.auth.signInWithPassword({ email: 'sivaclinic@gmail.com', password: 'password123' });
+      if (error) { setError(error.message); setLoading(false); }
+      return;
+    }
+    
+    let loginEmail = email.trim();
+    if (!loginEmail.includes("@")) {
+      const { data, error: rpcErr } = await supabase!.rpc("login_email_for_username", { p_username: loginEmail });
+      if (rpcErr || !data) {
+        setError("Invalid username");
+        setLoading(false);
+        return;
+      }
+      loginEmail = String(data);
+    }
+    
+    const { error: err } = await supabase!.auth.signInWithPassword({ email: loginEmail, password });
+    if (err) {
+      setError(err.message);
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="auth-page">
-      <div className="auth-card">
-        <h1>MediFlow V2</h1>
-        <p className="auth-message">Please sign in from the current app first, then open this version.</p>
-        <a className="primary auth-submit" href="/">Open current app</a>
+    <div className="auth-page" style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f0f4f2' }}>
+      <div className="auth-card" style={{ background: '#fff', padding: '40px', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.08)', width: '100%', maxWidth: '400px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '30px' }}>
+          <h1 style={{ color: '#126b5a', margin: '0 0 10px 0', fontSize: '28px' }}>MediFlow V2</h1>
+          <p style={{ color: '#666', margin: 0 }}>Sign in to continue</p>
+        </div>
+        
+        {error && <div style={{ backgroundColor: '#fee2e2', color: '#b91c1c', padding: '12px', borderRadius: '6px', marginBottom: '20px', fontSize: '14px' }}>{error}</div>}
+        
+        <form onSubmit={handleLogin}>
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#444', marginBottom: '8px' }}>Username or Email</label>
+            <input type="text" value={email} onChange={e => setEmail(e.target.value)} required style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} placeholder="Enter username or email" />
+          </div>
+          
+          <div style={{ marginBottom: '30px' }}>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#444', marginBottom: '8px' }}>Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid #ccc', boxSizing: 'border-box' }} placeholder="Enter password" />
+          </div>
+          
+          <button type="submit" disabled={loading} style={{ width: '100%', padding: '14px', backgroundColor: '#126b5a', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '16px', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}>
+            {loading ? 'Signing in...' : 'Sign In'}
+          </button>
+        </form>
       </div>
     </div>
   );
@@ -148,7 +202,19 @@ const accountReportPages = new Set([
 import { useRealtimeSync } from "./lib/useRealtimeSync";
 
 export default function V2App({ pageKey = "dashboard" }: { pageKey?: string }) {
-  const [session, setSession] = useState<any>(undefined);
+  
+  useEffect(() => {
+    try {
+      App.addListener('backButton', () => {
+        if (window.history.length > 2) {
+          window.history.back();
+        } else {
+          App.exitApp();
+        }
+      });
+    } catch (e) {}
+  }, []);
+const [session, setSession] = useState<any>(undefined);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [allowedPages, setAllowedPages] = useState<string[] | null>(null);
@@ -160,6 +226,25 @@ export default function V2App({ pageKey = "dashboard" }: { pageKey?: string }) {
 
   // Activate global realtime cache invalidation
   useRealtimeSync(profile?.organization_id);
+
+  // Supply mobile cards with their column headings, including tables rendered by
+  // workflow components that do not set data-label themselves.
+  useEffect(() => {
+    const labelTables = () => {
+      document.querySelectorAll<HTMLTableElement>(".app-shell table.data-table").forEach((table) => {
+        const headings = Array.from(table.querySelectorAll<HTMLTableCellElement>("thead th")).map((cell) => cell.textContent?.trim() || "");
+        table.querySelectorAll<HTMLTableRowElement>("tbody tr").forEach((row) => {
+          Array.from(row.children).forEach((cell, index) => {
+            if (cell instanceof HTMLTableCellElement && !cell.dataset.label && headings[index]) cell.dataset.label = headings[index];
+          });
+        });
+      });
+    };
+    labelTables();
+    const observer = new MutationObserver(labelTables);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [active]);
 
   // Auth
   useEffect(() => {

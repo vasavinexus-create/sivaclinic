@@ -57,6 +57,7 @@ export const v2Nav: V2NavItem[] = [
   { label: "Sales/Billing Report", key: "sales-report" },
   { label: "GST/Tax Report", key: "gst-report" },
   { title: "ADMINISTRATION" },
+  { label: "Clinic Management", key: "clinic-management" },
   { label: "Users & Roles", key: "users-and-roles" },
   { label: "Settings", key: "settings" },
 ];

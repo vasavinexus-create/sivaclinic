@@ -7,6 +7,7 @@ import { fmtDate, money, nextCode } from "../lib/format";
 import { pageSizeOptions } from "../lib/modules";
 import { usePagedQuery } from "../lib/usePagedQuery";
 import { FieldConfig, ModuleConfig, Profile, Row } from "../lib/types";
+import { Capacitor } from "@capacitor/core";
 
 function isMoneyColumn(key: string) {
   return key.includes("fee") || key.includes("rate") || key.includes("amount") || key.includes("balance") || key === "mrp";
@@ -147,7 +148,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
     }
   };
 
-  return <div>
+  return <div className={`paged-crud page-${module.key}`}>
     <div className={`page-head ${isPrintingCustom ? "print-hide" : ""}`}>
       <div><h1>{module.title}</h1><p>{module.subtitle}</p></div>
       {editable && <button className="primary" onClick={() => { setEditing(null); setOpen(true); }}><Plus size={17}/> Add {module.title}</button>}
@@ -155,16 +156,18 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
     <div className={`panel ${isPrintingCustom ? "print-hide" : ""}`}>
       <div className="v2-toolbar">
         <div className="search-box"><Search/><input placeholder={`Search ${module.title.toLowerCase()} in database`} value={searchInput} onChange={(event) => setSearchInput(event.currentTarget.value)}/></div>
-        {module.filters?.map((filter) => <label className="v2-filter" key={filter.key}><span>{filter.label}</span><select value={filters[filter.key] || ""} onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, [filter.key]: event.currentTarget.value })); }}><option value="">All</option>{filter.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>)}
-        <label className="v2-filter"><span>Rows</span><select value={pageSize} onChange={(event) => { setPage(1); setPageSize(Number(event.currentTarget.value)); }}>{pageSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
-        <button className="secondary" onClick={state.reload}><RefreshCw size={15}/> Refresh</button>
+        <div className="v2-toolbar-controls">
+          {module.filters?.map((filter) => <label className="v2-filter" key={filter.key}><span>{filter.label}</span><select value={filters[filter.key] || ""} onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, [filter.key]: event.currentTarget.value })); }}><option value="">All</option>{filter.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>)}
+          <label className="v2-filter"><span>Rows</span><select value={pageSize} onChange={(event) => { setPage(1); setPageSize(Number(event.currentTarget.value)); }}>{pageSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
+          <button className="secondary toolbar-refresh" onClick={state.reload}><RefreshCw size={15}/> Refresh</button>
+        </div>
         {module.selectable && selected.size > 0 && (
           module.key === 'low-stock' ? (
             <button className="secondary primary-text" onClick={() => setShowOrderModal(true)}>Generate Purchase Order ({selected.size})</button>
           ) : module.key === 'expiry-alerts' ? (
             <button className="secondary primary-text" onClick={() => setShowLetterModal(true)}>Generate Replacement Letter ({selected.size})</button>
           ) : (
-            <button className="secondary primary-text" onClick={() => window.print()}>Print / Save PDF ({selected.size} selected)</button>
+            <button className="secondary primary-text" onClick={() => (Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print())}>Print / Save PDF ({selected.size} selected)</button>
           )
         )}
       </div>
@@ -184,7 +187,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
   else next.delete(row.id);
   setSelected(next);
 }} /></td>}
-{module.columns.map(([key]) => <td key={key}>{renderCell(row, key, module.key)}</td>)}
+{module.columns.map(([key, label]) => <td key={key} data-label={label}>{renderCell(row, key, module.key)}</td>)}
 {editable && <td className="no-print"><button className="table-edit" onClick={() => { setEditing(row); setOpen(true); }}><Pencil size={14}/> Edit</button></td>}
 </tr>)}</tbody></table></div>
         <div className="pagination-bar"><span>{rangeLabel}</span><div><button className="secondary" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Prev</button><span>Page {page} / {pageCount}</span><button className="secondary" disabled={page >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</button></div></div>
@@ -238,7 +241,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
           </div>
           <div className="form-actions">
             <button type="button" className="secondary" onClick={() => setShowOrderModal(false)}>Cancel</button>
-            <button className="primary" onClick={() => { setIsPrintingCustom(true); setTimeout(() => { window.print(); setTimeout(() => { setIsPrintingCustom(false); setShowOrderModal(false); }, 500); }, 500); }}>Print Order</button>
+            <button className="primary" onClick={() => { setIsPrintingCustom(true); setTimeout(() => { (Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print()); setTimeout(() => { setIsPrintingCustom(false); setShowOrderModal(false); }, 500); }, 500); }}>Print Order</button>
           </div>
         </div>
       </div>
@@ -253,7 +256,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
           </div>
           <div className="form-actions" style={{ marginTop: 20 }}>
             <button type="button" className="secondary" onClick={() => setShowLetterModal(false)}>Cancel</button>
-            <button className="primary" onClick={() => { setIsPrintingCustom(true); setTimeout(() => { window.print(); setTimeout(() => { setIsPrintingCustom(false); setShowLetterModal(false); }, 500); }, 500); }}>Print Letter</button>
+            <button className="primary" onClick={() => { setIsPrintingCustom(true); setTimeout(() => { (Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print()); setTimeout(() => { setIsPrintingCustom(false); setShowLetterModal(false); }, 500); }, 500); }}>Print Letter</button>
           </div>
         </div>
       </div>

@@ -1,6 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
+import { Camera as NativeCamera, CameraDirection, CameraResultType, CameraSource } from "@capacitor/camera";
 import { CheckCircle2, LoaderCircle, Camera, Paperclip, X } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 import { fmtDate, money } from "../lib/format";
@@ -131,6 +133,7 @@ export function ConsultationWorkflow({ profile, notify, title = "Consultation", 
   const [doctors, setDoctors] = useState<Row[]>([]);
   const [saving, setSaving] = useState(false);
   const [selectedImageFiles, setSelectedImageFiles] = useState<File[]>([]);
+  const browserCameraInput = useRef<HTMLInputElement>(null);
   const assignedDoctor = doctors.find((doctor) => doctor.profile_id === profile.id) || doctors.find((doctor) => String(doctor.name || "").trim().toLowerCase() === String(profile.full_name || "").trim().toLowerCase());
   const doctorLocked = profile.role === "doctor" && Boolean(assignedDoctor);
   useEffect(() => {
@@ -144,6 +147,32 @@ export function ConsultationWorkflow({ profile, notify, title = "Consultation", 
     const selected = doctors.find((doctor) => doctor.id === doctorId);
     if (selected) setDoctorFee(String(Number(selected.default_fee || 0)));
   }, [doctorId, doctors]);
+
+  const takePhoto = async () => {
+    if (!Capacitor.isNativePlatform() || !Capacitor.isPluginAvailable("Camera")) {
+      browserCameraInput.current?.click();
+      return;
+    }
+    try {
+      const photo = await NativeCamera.getPhoto({
+        source: CameraSource.Camera,
+        direction: CameraDirection.Rear,
+        resultType: CameraResultType.Uri,
+        quality: 90,
+        correctOrientation: true,
+        saveToGallery: false,
+      });
+      if (!photo.webPath) throw new Error("Camera did not return a photo");
+      const response = await fetch(photo.webPath);
+      const blob = await response.blob();
+      const extension = photo.format || blob.type.split("/")[1] || "jpeg";
+      const file = new File([blob], `camera-${Date.now()}.${extension}`, { type: blob.type || `image/${extension}` });
+      setSelectedImageFiles((current) => [...current, file]);
+    } catch (error: any) {
+      const message = String(error?.message || error || "");
+      if (!/cancel/i.test(message)) notify(`Camera failed: ${message || "Unable to take photo"}`);
+    }
+  };
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!patientId || !doctorId) return;
@@ -234,12 +263,12 @@ export function ConsultationWorkflow({ profile, notify, title = "Consultation", 
         )}
 
         <div className="prescription-actions" style={{ display: 'flex', gap: '16px', marginBottom: '20px' }}>
-          <label className="prescription-action" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px', background: '#f8faf9', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer', textAlign: 'center' }}>
+          <button type="button" className="prescription-action" onClick={takePhoto} style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px', background: '#f8faf9', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer', textAlign: 'center' }}>
             <Camera size={22} style={{ margin: '0 auto 8px' }}/>
             <strong>Take photo</strong>
             <span style={{ fontSize: '12px', color: '#64748b' }}>Press to add camera photo</span>
-            <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e=>{const added=Array.from(e.target.files||[]);setSelectedImageFiles(current=>[...current,...added]);e.target.value=""}}/>
-          </label>
+          </button>
+          <input ref={browserCameraInput} type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={e=>{const added=Array.from(e.target.files||[]);setSelectedImageFiles(current=>[...current,...added]);e.target.value=""}}/>
           <label className="prescription-action" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px', background: '#f8faf9', border: '1px solid #e2e8f0', borderRadius: '8px', cursor: 'pointer', textAlign: 'center' }}>
             <Paperclip size={22} style={{ margin: '0 auto 8px' }}/>
             <strong>Choose images</strong>
@@ -271,11 +300,13 @@ export function PatientHistoryWorkflow({ profile, notify }: { profile: Profile; 
 }
 
 export function FollowUpWorkflow() {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const today = new Date().toISOString().slice(0, 10);
+  const [fromDate, setFromDate] = useState(today);
+  const [toDate, setToDate] = useState(today);
   const [rows, setRows] = useState<Row[]>([]);
   useEffect(() => {
     if (!supabase) return;
-    supabase.from("consultations").select("id,visited_at,follow_up_date,symptoms,diagnosis,patient:patients(patient_id,name,mobile),doctor:doctors(name)").eq("follow_up_date", date).order("visited_at", { ascending: false }).limit(200).then(({ data }) => setRows(data || []));
-  }, [date]);
-  return <div><div className="page-head"><div><h1>Follow-up Alerts</h1><p>Native V2 follow-up workflow</p></div></div><div className="panel"><label className="field"><span>Follow-up date</span><input type="date" value={date} onChange={(event) => setDate(event.currentTarget.value)}/></label>{rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Patient</th><th>Doctor</th><th>Visit</th><th>Symptoms</th><th>Diagnosis</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td>{row.patient?.name}</td><td>{row.doctor?.name}</td><td>{fmtDate(row.visited_at)}</td><td>{row.symptoms}</td><td>{row.diagnosis}</td></tr>)}</tbody></table></div> : <div className="empty"><h3>No follow-ups found.</h3><p>Change date to search.</p></div>}</div></div>;
+    supabase.from("consultations").select("id,visited_at,follow_up_date,symptoms,diagnosis,patient:patients(patient_id,name,mobile),doctor:doctors(name)").gte("follow_up_date", fromDate).lte("follow_up_date", toDate).order("follow_up_date", { ascending: true }).limit(200).then(({ data }) => setRows(data || []));
+  }, [fromDate, toDate]);
+  return <div className="follow-up-page"><div className="page-head"><div><h1>Follow-up Alerts</h1><p>Follow-ups due in the selected date range</p></div></div><div className="panel"><div className="followup-date-range"><label className="field"><span>From</span><input type="date" value={fromDate} onChange={(event) => setFromDate(event.currentTarget.value)}/></label><label className="field"><span>To</span><input type="date" value={toDate} min={fromDate} onChange={(event) => setToDate(event.currentTarget.value)}/></label></div>{rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Follow-up</th><th>Patient</th><th>Doctor</th><th>Visit</th><th>Symptoms</th><th>Diagnosis</th></tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td data-label="Follow-up">{fmtDate(row.follow_up_date)}</td><td data-label="Patient">{row.patient?.name}</td><td data-label="Doctor">{row.doctor?.name}</td><td data-label="Visit">{fmtDate(row.visited_at)}</td><td data-label="Symptoms">{row.symptoms || "-"}</td><td data-label="Diagnosis">{row.diagnosis || "-"}</td></tr>)}</tbody></table></div> : <div className="empty"><h3>No follow-ups found.</h3><p>Change the date range to search.</p></div>}</div></div>;
 }

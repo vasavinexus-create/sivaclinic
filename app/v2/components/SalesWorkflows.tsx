@@ -36,19 +36,17 @@ export function SalesWorkflow({ profile, notify }: { profile: Profile; notify: (
     } catch (error) { notify(error instanceof Error ? error.message : "Bill cancellation failed"); }
   };
 
-  return <div><div className="page-head"><div><h1>Sales</h1><p>Native V2 sales register with cancellation audit and stock reversal.</p></div></div><div className="panel">
-<div className="tab-row" style={{marginBottom:"16px", display: "flex", justifyContent: "space-between", alignItems: "center"}}>
-  <div>
+  return <div className="sales-page"><div className="page-head"><div><h1>Sales</h1><p>Sales register with cancellation audit and stock reversal.</p></div></div><div className="panel">
+<div className="sales-tools">
+  <div className="tab-row sales-tabs">
     <button className={tab==="completed"?"active":""} onClick={()=>setTab("completed")}>Completed</button>
     <button className={tab==="cancelled"?"active":""} onClick={()=>setTab("cancelled")}>Cancelled</button>
   </div>
-  <form onSubmit={(e) => { e.preventDefault(); setFromDate(fromInput); setToDate(toInput); }} style={{display: "flex", gap: "8px", alignItems: "center"}}>
-    <label style={{fontSize:"13px", margin:0}}>From</label>
-    <input type="date" value={fromInput} onChange={(e) => setFromInput(e.target.value)} required />
-    <label style={{fontSize:"13px", margin:0}}>To</label>
-    <input type="date" value={toInput} onChange={(e) => setToInput(e.target.value)} required />
+  <form className="sales-date-form" onSubmit={(e) => { e.preventDefault(); setFromDate(fromInput); setToDate(toInput); }}>
+    <div className="sales-date-headings"><span>From</span><span>To</span></div>
+    <div className="sales-date-inputs"><input aria-label="From date" type="date" value={fromInput} onChange={(e) => setFromInput(e.target.value)} required /><input aria-label="To date" type="date" value={toInput} min={fromInput} onChange={(e) => setToInput(e.target.value)} required /></div>
     <button type="submit" className="primary">Load</button>
   </form>
 </div>
-{loading ? <div className="loading-panel">Loading sales...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Invoice</th><th>Date</th><th>Patient</th><th>Type</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((sale) => <tr key={sale.id}><td>{sale.invoice_no}</td><td>{fmtDate(sale.sold_at)}</td><td>{sale.patient?.name || "Walk-in"}</td><td>{sale.sale_type || "outpatient"}</td><td>{money(sale.grand_total)}</td><td>{sale.status}</td><td>{tab === "completed" && canDeleteBill(profile.role, sale.sold_at, sale.status) ? <button className="table-edit danger-btn" onClick={() => cancelSale(sale)}><Trash2 size={14}/> Cancel</button> : "-"}</td></tr>)}</tbody></table></div> : <div className="empty"><h3>{tab === "completed" ? "No completed sales found." : "No cancelled sales found."}</h3><p>For the selected date.</p></div>}</div></div>;
+{loading ? <div className="loading-panel">Loading sales...</div> : rows.length ? <div className="data-wrap"><table className="data-table"><thead><tr><th>Invoice</th><th>Date</th><th>Patient</th><th>Type</th><th>Total</th><th>Status</th><th>Action</th></tr></thead><tbody>{rows.map((sale) => <tr key={sale.id}><td data-label="Invoice">{sale.invoice_no}</td><td data-label="Date">{fmtDate(sale.sold_at)}</td><td data-label="Patient">{sale.patient?.name || "Walk-in"}</td><td data-label="Type">{sale.sale_type || "outpatient"}</td><td data-label="Total">{money(sale.grand_total)}</td><td data-label="Status">{sale.status}</td><td data-label="Action">{tab === "completed" && canDeleteBill(profile.role, sale.sold_at, sale.status) ? <button className="table-edit danger-btn" onClick={() => cancelSale(sale)}><Trash2 size={14}/> Cancel</button> : "-"}</td></tr>)}</tbody></table></div> : <div className="empty"><h3>{tab === "completed" ? "No completed sales found." : "No cancelled sales found."}</h3><p>For the selected date.</p></div>}</div></div>;
 }

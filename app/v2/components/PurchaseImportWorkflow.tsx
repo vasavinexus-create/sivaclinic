@@ -1303,9 +1303,9 @@ const stitchImages = async (files: File[]): Promise<string> => {
                 <Field name="manufacturer" label="Manufacturer" value={newProductForm.manufacturer || ""} onChange={(e: any) => setNewProductForm({ ...newProductForm, manufacturer: e.target.value })} />
                 <Field name="pack_size" label="Pack Size" value={newProductForm.pack_size || ""} onChange={(e: any) => setNewProductForm({ ...newProductForm, pack_size: e.target.value })} />
                 <Field name="hsn_code" label="HSN Code" value={newProductForm.hsn_code || ""} onChange={(e: any) => setNewProductForm({ ...newProductForm, hsn_code: e.target.value })} />
-                <Field name="mrp" label="MRP" type="number" value={newProductForm.mrp || 0} onChange={(e: any) => setNewProductForm({ ...newProductForm, mrp: e.target.value })} required />
-                <Field name="purchase_rate" label="Purchase Rate" type="number" value={newProductForm.purchase_rate || 0} onChange={(e: any) => setNewProductForm({ ...newProductForm, purchase_rate: e.target.value })} required />
-                <Field name="gst_percent" label="GST %" type="number" value={newProductForm.gst_percent || 0} onChange={(e: any) => setNewProductForm({ ...newProductForm, gst_percent: e.target.value })} />
+                <Field name="mrp" label="MRP" type="number" value={newProductForm.mrp ?? ""} onChange={(e: any) => setNewProductForm({ ...newProductForm, mrp: e.target.value })} required />
+                <Field name="purchase_rate" label="Purchase Rate" type="number" value={newProductForm.purchase_rate ?? ""} onChange={(e: any) => setNewProductForm({ ...newProductForm, purchase_rate: e.target.value })} required />
+                <Field name="gst_percent" label="GST %" type="number" value={newProductForm.gst_percent ?? ""} onChange={(e: any) => setNewProductForm({ ...newProductForm, gst_percent: e.target.value })} />
               </div>
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "16px" }}>

@@ -201,6 +201,50 @@ body{font-size:20px;line-height:1.45}
   .app-shell .data-table td{font-size:19px!important}
 }
 
+/* Reports & Statements: compact accounting rows on mobile only. */
+.mobile-report-list{display:none}
+.report-filter-details>summary{display:none}
+.debit-value{color:#16803c!important}
+.credit-value{color:#dc2626!important}
+@media(max-width:700px){
+  .financial-report-page .report-actions{display:grid!important;grid-template-columns:1fr 1fr 1fr;width:100%;gap:7px}
+  .financial-report-page .report-actions button{width:100%;min-width:0;justify-content:center;padding-inline:7px!important}
+  .financial-report-page .report-filter-details{border:1px solid var(--line);border-radius:9px;margin-bottom:14px;overflow:hidden}
+  .financial-report-page .report-filter-details>summary{display:block;cursor:pointer;padding:13px 14px;background:#f3f6f4;font-size:16px;font-weight:800;list-style-position:inside}
+  .financial-report-page .report-filter-details>.v2-toolbar{padding:14px;margin:0}
+  .financial-report-page .desktop-report-table{display:none!important}
+  .financial-report-page .mobile-report-list{display:block;width:100%;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .financial-report-page .mobile-report-heading,
+  .financial-report-page .mobile-report-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(112px,auto);gap:12px;align-items:center}
+  .financial-report-page .three-column-report .mobile-report-heading,
+  .financial-report-page .three-column-report .mobile-report-row{grid-template-columns:minmax(0,1fr) minmax(86px,auto) minmax(86px,auto);gap:7px}
+  .financial-report-page .mobile-report-heading{padding:10px 4px;background:#f3f6f4;color:var(--muted);font-weight:800}
+  .financial-report-page .mobile-report-heading span:not(:first-child){text-align:right}
+  .financial-report-page .mobile-report-entry{border-top:1px solid var(--line)}
+  .financial-report-page .mobile-report-entry>summary{list-style:none;cursor:pointer}
+  .financial-report-page .mobile-report-entry>summary::-webkit-details-marker{display:none}
+  .financial-report-page .mobile-report-row{padding:13px 4px;border-top:1px solid var(--line);background:transparent}
+  .financial-report-page .mobile-report-entry .mobile-report-row{border-top:0}
+  .financial-report-page .mobile-report-row>div{min-width:0;text-align:left}
+  .financial-report-page .mobile-report-row strong{display:block;font-size:16px!important;line-height:1.3;overflow-wrap:anywhere}
+  .financial-report-page .mobile-report-row small{display:block;margin-top:4px;color:var(--muted);font-size:13px!important}
+  .financial-report-page .mobile-report-row>b{text-align:right;font-size:17px!important;white-space:nowrap}
+  .financial-report-page .three-column-report .mobile-report-row>b{font-size:15px!important}
+  .financial-report-page .mobile-report-meta{padding:0 4px 12px 18px;background:#fafcfa}
+  .financial-report-page .mobile-report-meta>div{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:10px;padding:8px 0;border-bottom:1px dashed var(--line)}
+  .financial-report-page .mobile-report-meta span{color:var(--muted);font-size:13px!important}
+  .financial-report-page .mobile-report-meta b{text-align:right;font-size:13px!important;overflow-wrap:anywhere}
+  .financial-report-page .report-summaries{display:block!important;position:sticky;z-index:8;bottom:calc(env(safe-area-inset-bottom) + 8px);border:1px solid var(--line);border-radius:10px;margin:0 0 18px;background:#fffffff2;box-shadow:0 8px 28px #17342f22;max-height:42vh;overflow:auto}
+  .financial-report-page .report-summaries .summary-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:12px 4px!important;background:transparent}
+  .financial-report-page .report-summaries .summary-card span{text-align:left;font-size:15px!important;font-weight:700}
+  .financial-report-page .report-summaries .summary-card strong{text-align:right;font-size:17px!important;margin:0;white-space:nowrap}
+}
+@media(max-width:420px){
+  .financial-report-page .three-column-report .mobile-report-heading,
+  .financial-report-page .three-column-report .mobile-report-row{grid-template-columns:minmax(0,1fr) 80px 80px}
+  .financial-report-page .three-column-report .mobile-report-row>b{font-size:13px!important}
+}
+
 .dashboard-section-title{font:700 34px var(--font-sans);margin:0 0 18px;color:var(--ink)}
 .consultation-workspace{background:transparent;border:0;border-radius:0;padding:0;max-width:none}
 .consultation-workspace form{display:grid;gap:24px}
@@ -470,4 +514,296 @@ body{font-size:20px;line-height:1.45}
   .print-clear { clear: both; }
   
   .print-footer { text-align: center; margin-top: 50px; font-size: 12px; color: #666; border-top: 1px dashed #ccc; padding-top: 10px; }
+}
+
+@media(max-width:800px) {
+  .app-shell .data-table thead, .crud-table-wrap thead { display: none !important; }
+  .app-shell .data-table tbody, .crud-table-wrap tbody { display: grid; gap: 16px; background: transparent !important; }
+  .app-shell .data-table tr, .crud-table-wrap tr { display: flex; flex-direction: column; gap: 10px; border: 1px solid var(--line) !important; border-radius: 12px; padding: 16px !important; background: #fff !important; box-shadow: 0 2px 10px rgba(0,0,0,0.03); }
+  .app-shell .data-table td, .crud-table-wrap td { display: flex !important; justify-content: space-between; align-items: flex-start; border: none !important; padding: 0 !important; font-size: 16px !important; text-align: right; word-break: break-word; min-width: 0; gap: 8px; }
+  .app-shell .data-table td > span, .app-shell .data-table td > div { min-width: 0; overflow-wrap: break-word; }
+  .app-shell .data-table td::before, .crud-table-wrap td::before { content: attr(data-label); font-weight: 700; color: var(--muted); font-size: 12px; float: left; text-align: left; padding-right: 12px; }
+  .app-shell .data-table td:empty, .crud-table-wrap td:empty { display: none !important; }
+  .app-shell .data-table td.no-print, .crud-table-wrap td.no-print { justify-content: flex-end; gap: 12px; margin-top: 6px; padding-top: 10px !important; border-top: 1px solid #f0f4f2 !important; }
+  .app-shell .data-table td .table-edit { margin: 0 !important; width: 100%; justify-content: center; }
+}
+
+/* Mobile-only workflow refinements. Desktop and tablet-wide layouts are unchanged. */
+.v2-toolbar-controls{display:contents}
+.sales-tools{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:16px}
+.sales-tabs{margin:0}
+.sales-date-form{display:grid;gap:7px;align-items:end}
+.sales-date-headings,.sales-date-inputs{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.sales-date-headings span{font-size:13px;font-weight:700;color:var(--muted)}
+.sales-date-inputs input{min-height:40px;border:1px solid var(--line);border-radius:7px;padding:0 9px;background:#fff}
+.sales-date-form .primary{justify-self:end}
+.followup-date-range{display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:620px;margin-bottom:16px}
+
+@media(max-width:800px){
+  .v2-toolbar{display:flex!important;flex-direction:column;align-items:stretch}
+  .v2-toolbar-controls{display:flex;width:100%;gap:8px;align-items:flex-end}
+  .v2-toolbar-controls .v2-filter{flex:1;min-width:0}
+  .v2-toolbar-controls .v2-filter select{width:100%;height:48px;font-size:16px}
+  .v2-toolbar-controls .toolbar-refresh{flex:0 0 auto;white-space:nowrap;padding-inline:13px!important}
+
+  .page-patients .data-table tr{gap:6px!important}
+  .page-patients .data-table td:nth-child(1),
+  .page-patients .data-table td:nth-child(3),
+  .page-patients .data-table td:nth-child(4),
+  .page-patients .data-table td:nth-child(6){display:none!important}
+  .app-shell .page-patients .data-table td:nth-child(2),
+  .app-shell .page-patients .data-table td:nth-child(5){justify-content:flex-start!important;text-align:left!important;font-size:20px!important;font-weight:700}
+  .app-shell .page-patients .data-table td:nth-child(5){font-size:18px!important;font-weight:600;color:var(--muted)}
+  .page-patients .data-table td:nth-child(2)::before,
+  .page-patients .data-table td:nth-child(5)::before{display:none!important}
+
+  .app-shell .page-medicine .data-table td{font-size:18px!important}
+  .doctor-fees-page .data-table td,
+  .follow-up-page .data-table td{text-align:left!important}
+  .doctor-fees-page .data-table td::before,
+  .follow-up-page .data-table td::before{text-align:left;flex:0 0 42%}
+
+  .followup-date-range{grid-template-columns:1fr 1fr;max-width:none}
+  .followup-date-range .field{margin:0;text-align:left}
+
+  .sales-tools{display:block}
+  .sales-tabs{display:grid!important;grid-template-columns:1fr 1fr;gap:8px!important;margin-bottom:18px!important}
+  .sales-tabs button{width:100%}
+  .sales-date-form{width:100%;gap:8px}
+  .sales-date-headings,.sales-date-inputs{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .sales-date-headings span{text-align:left;font-size:15px!important}
+  .sales-date-inputs input{width:100%;min-width:0;height:48px;font-size:14px;box-sizing:border-box}
+  .sales-date-form .primary{width:100%;justify-content:center;margin-top:2px}
+
+  .medicine-sales-page .v2-toolbar{align-items:stretch!important}
+  .medicine-sales-page .v2-toolbar>.field,
+  .medicine-sales-page .v2-toolbar>.async-select,
+  .medicine-sales-page .v2-toolbar>div{width:100%!important;text-align:left}
+  .medicine-sales-page .data-table td{text-align:right!important}
+
+  .billing-table td:nth-child(1)::before{content:"Medicine"}
+  .billing-table td:nth-child(2)::before{content:"Batch"}
+  .billing-table td:nth-child(3)::before{content:"Qty"}
+  .billing-table td:nth-child(4)::before{content:"MRP rate"}
+  .billing-table td:nth-child(5)::before{content:"Discount %"}
+  .billing-table td:nth-child(6)::before{content:"Final rate"}
+  .billing-table td:nth-child(7)::before{content:"GST"}
+  .billing-table td:nth-child(8)::before{content:"Total"}
+  .billing-table td:nth-child(9)::before{content:"Action"}
+}
+
+@media(max-width:480px){
+  .page-patients .page-head .primary{width:100%;justify-content:center;margin-top:14px}
+  .v2-toolbar-controls{gap:6px}
+  .v2-toolbar-controls .toolbar-refresh{font-size:0!important;min-width:52px!important;padding:12px!important}
+  .v2-toolbar-controls .toolbar-refresh svg{width:20px;height:20px;margin:0}
+}
+
+@media(max-width:800px) {
+  body, html { overflow-x: hidden; width: 100%; max-width: 100vw; }
+  .content, .app-shell, .v2-shell { max-width: 100vw !important; overflow-x: hidden; box-sizing: border-box; }
+}
+
+@media(max-width:800px) {
+  .app-shell, .app-shell p, .app-shell span, .app-shell small, .app-shell label, .app-shell input, .app-shell textarea, .app-shell select, .app-shell button, .app-shell td { font-size: 16px !important; }
+  .app-shell h1 { font-size: 32px !important; }
+  .app-shell h2, .app-shell .panel-title { font-size: 24px !important; }
+  .app-shell h3 { font-size: 20px !important; }
+  .app-shell .data-table td { font-size: 15px !important; }
+  .app-shell .btn, .app-shell .primary, .app-shell .secondary { font-size: 16px !important; height: auto !important; padding: 12px 20px !important; min-height: 48px !important; }
+  .v2-toolbar { display: flex; flex-direction: column; }
+  .v2-toolbar > div, .v2-toolbar > .search-box { width: 100% !important; max-width: 100% !important; }
+  .form-grid { display: flex; flex-direction: column; gap: 16px; }
+  .modal { width: 100% !important; border-radius: 12px !important; max-height: 90vh !important; }
+}
+
+/* Complete phone layout pass for every workflow. Kept last so component inline
+   desktop layouts cannot force horizontal overflow on narrow screens. */
+@media(max-width:700px){
+  .app-shell *{box-sizing:border-box}
+  .app-shell button,.app-shell a,.app-shell input,.app-shell select,.app-shell textarea{touch-action:manipulation}
+  .content{width:100%;padding:18px 12px calc(84px + env(safe-area-inset-bottom))!important}
+  .panel{width:100%;min-width:0;padding:14px!important;overflow:visible}
+
+  .app-shell .page-head{display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:14px;margin-bottom:20px!important}
+  .app-shell .page-head>div{width:100%;max-width:none!important;min-width:0}
+  .app-shell .page-head h1{font-size:29px!important;overflow-wrap:anywhere}
+  .app-shell .page-head p{font-size:15px!important;line-height:1.45;margin-top:7px}
+  .app-shell .page-head>.primary,
+  .app-shell .page-head>.secondary{width:100%;justify-content:center}
+  .app-shell .page-head>.print-hide{display:grid!important;grid-template-columns:1fr 1fr;width:100%;gap:8px!important}
+  .app-shell .page-head>.print-hide button{width:100%;justify-content:center;margin:0!important}
+
+  .app-shell .form-grid{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:14px!important}
+  .app-shell .field,.app-shell .async-select{width:100%!important;min-width:0!important;margin-left:0;margin-right:0;text-align:left}
+  .app-shell .field input,.app-shell .field select,.app-shell .field textarea,
+  .app-shell .async-select input{width:100%!important;max-width:100%;min-width:0}
+  .app-shell .inline-add{display:flex;flex-direction:column;align-items:stretch}
+  .app-shell .inline-add button{width:100%;justify-content:center}
+  .app-shell .form-actions{display:grid!important;grid-template-columns:1fr;gap:9px;width:100%}
+  .app-shell .form-actions button{width:100%;justify-content:center;margin:0!important}
+
+  .app-shell .v2-toolbar,.app-shell .table-toolbar,.app-shell .table-inline-search,.app-shell .data-toolbar{
+    display:flex!important;flex-direction:column!important;align-items:stretch!important;width:100%;gap:10px
+  }
+  .app-shell .v2-toolbar>*:not(.v2-toolbar-controls),
+  .app-shell .table-toolbar>*,.app-shell .table-inline-search>*,.app-shell .data-toolbar>*{width:100%!important;max-width:none!important;min-width:0!important}
+  .app-shell .search-box{width:100%;max-width:none;height:48px}
+  .app-shell .search-box input{min-width:0;font-size:16px!important}
+  .app-shell .v2-toolbar .tab-row{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:8px}
+  .app-shell .v2-toolbar .tab-row button{width:100%;min-width:0;padding-inline:8px!important}
+
+  .app-shell .data-wrap,.app-shell .table-wrap{width:100%;max-width:100%;overflow:visible!important}
+  .app-shell .data-table{width:100%;table-layout:fixed}
+  .app-shell .data-table tbody{width:100%}
+  .app-shell .data-table tr{width:100%;min-width:0}
+  .app-shell .data-table td{width:100%;min-width:0;white-space:normal!important;line-height:1.35;overflow-wrap:anywhere}
+  .app-shell .data-table td::before{flex:0 0 42%;min-width:0;overflow-wrap:anywhere}
+  .app-shell .data-table td>input,.app-shell .data-table td>select{max-width:55%!important;min-width:96px}
+  .app-shell .data-table td .table-edit{min-height:44px!important}
+  .app-shell .data-table td[data-label="Action"],
+  .app-shell .data-table td:last-child:has(.table-edit){padding-top:10px!important;margin-top:4px;border-top:1px solid var(--line)!important}
+
+  .app-shell .summary-strip,.app-shell .bill-summary{grid-template-columns:1fr!important;gap:9px}
+  .app-shell .summary-card{min-width:0;width:100%}
+  .app-shell .summary-card strong{overflow-wrap:anywhere}
+  .app-shell .checkout,.app-shell .sales-checkout{display:flex!important;flex-direction:column;align-items:stretch!important;gap:12px;width:100%}
+  .app-shell .checkout>*{width:100%!important;max-width:none;text-align:left}
+  .app-shell .checkout button{justify-content:center}
+  .app-shell .totals-mini{display:grid!important;grid-template-columns:1fr!important;width:100%;gap:9px}
+  .app-shell .special-discount-field{width:100%!important}
+
+  .app-shell .pagination-bar{display:flex;flex-direction:column;align-items:stretch;gap:10px;text-align:center}
+  .app-shell .pagination-bar>div{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;width:100%}
+  .app-shell .pagination-bar button{width:100%;justify-content:center}
+
+  .app-shell .tab-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .app-shell .tab-row button{width:100%;min-width:0;white-space:normal}
+  .app-shell .user-row{display:flex;flex-direction:column;align-items:stretch;gap:12px;padding:14px}
+  .app-shell .user-row>span{min-width:0;overflow-wrap:anywhere}
+  .app-shell .user-row-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .app-shell .user-row-actions button{width:100%;justify-content:center;min-width:0}
+  .app-shell .permission-head{display:flex;flex-direction:column;align-items:stretch}
+  .app-shell .permission-head .primary{width:100%;justify-content:center}
+
+  .app-shell .billing-entry-line,.app-shell .purchase-entry-grid,.app-shell .unit-purchase-grid{display:grid!important;grid-template-columns:minmax(0,1fr)!important;width:100%}
+  .app-shell .unit-purchase-grid>*{grid-column:auto!important}
+  .app-shell .billing-entry-line .primary,.app-shell .add-purchase-item{grid-column:auto!important;width:100%;justify-content:center}
+  .app-shell .stock-preview{line-height:1.65;overflow-wrap:anywhere}
+
+  .app-shell .admin-grid{display:grid;grid-template-columns:minmax(0,1fr)!important;width:100%}
+  .app-shell .modal-wrap{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)!important;align-items:stretch}
+  .app-shell .modal{width:100%!important;max-width:none!important;min-height:0!important;height:100dvh;max-height:100dvh!important;border-radius:0!important;padding:16px!important;overflow-y:auto;overscroll-behavior:contain}
+  .app-shell .modal-head{position:sticky;top:-16px;z-index:4;background:#fff;padding:16px 0 12px;align-items:flex-start}
+  .app-shell .modal-head>div{min-width:0}
+  .app-shell .modal-head h2,.app-shell .modal-head p{overflow-wrap:anywhere}
+
+  .app-shell .image-viewer-bar{align-items:flex-start;flex-direction:column}
+  .app-shell .image-viewer-bar>div{width:100%;justify-content:space-between;gap:4px}
+  .app-shell .image-viewer-bar button{min-width:38px;min-height:38px;padding:0!important}
+  .app-shell .image-nav{display:none}
+  .toast{left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));width:auto}
+}
+
+@media(max-width:380px){
+  .content{padding-left:9px!important;padding-right:9px!important}
+  .panel{padding:12px!important}
+  .app-shell .page-head h1{font-size:26px!important}
+  .app-shell .v2-toolbar-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end}
+  .app-shell .v2-toolbar-controls .toolbar-refresh{width:100%;font-size:0!important}
+  .app-shell .followup-date-range{grid-template-columns:1fr}
+  .app-shell .page-head>.print-hide{grid-template-columns:1fr}
+}
+
+/* Billing and inpatient billing medicine cards need to opt out of the desktop
+   column widths. Each field is one full-width heading/value row on phones. */
+@media(max-width:700px){
+  .app-shell .billing-table{
+    display:block!important;
+    table-layout:auto!important;
+    width:100%!important;
+  }
+  .app-shell .billing-table tbody{
+    display:grid!important;
+    width:100%!important;
+    gap:14px!important;
+  }
+  .app-shell .billing-table tr{
+    display:grid!important;
+    grid-template-columns:minmax(0,1fr)!important;
+    width:100%!important;
+    padding:14px!important;
+    gap:0!important;
+    overflow:hidden;
+  }
+  .app-shell .billing-table td,
+  .app-shell .billing-table td.col-med,
+  .app-shell .billing-table td.col-batch,
+  .app-shell .billing-table td.col-qty,
+  .app-shell .billing-table td.col-rate,
+  .app-shell .billing-table td.col-gst,
+  .app-shell .billing-table td.col-total,
+  .app-shell .billing-table td.col-action{
+    display:grid!important;
+    grid-template-columns:minmax(108px,40%) minmax(0,1fr)!important;
+    align-items:center!important;
+    width:100%!important;
+    max-width:none!important;
+    min-width:0!important;
+    padding:10px 0!important;
+    margin:0!important;
+    border:0!important;
+    border-bottom:1px solid #edf1ef!important;
+    text-align:right!important;
+    white-space:normal!important;
+    gap:12px!important;
+  }
+  .app-shell .billing-table td::before{
+    display:block!important;
+    width:auto!important;
+    min-width:0!important;
+    padding:0!important;
+    margin:0!important;
+    font-size:14px!important;
+    line-height:1.3!important;
+    font-weight:750!important;
+    text-align:left!important;
+    color:var(--muted)!important;
+    overflow-wrap:normal!important;
+    word-break:normal!important;
+  }
+  .app-shell .billing-table td>*{
+    min-width:0;
+    max-width:100%;
+    justify-self:stretch;
+    text-align:right;
+    overflow-wrap:anywhere;
+  }
+  .app-shell .billing-table td>strong{font-size:17px!important}
+  .app-shell .billing-table .table-qty-input{
+    width:min(150px,100%)!important;
+    max-width:100%!important;
+    min-width:0!important;
+    height:46px!important;
+    justify-self:end;
+    text-align:right!important;
+    color:#dc2626!important;
+    font-weight:800!important;
+    font-size:16px!important;
+  }
+  .app-shell .billing-panel .special-discount-field input[type="number"],
+  .app-shell .billing-panel .qty-field>input[type="number"]{
+    text-align:right!important;
+    color:#dc2626!important;
+    font-weight:800!important;
+  }
+  .app-shell .billing-table td.col-action{
+    border-bottom:0!important;
+    padding-bottom:0!important;
+  }
+  .app-shell .billing-table td.col-action .table-edit{
+    width:100%!important;
+    min-height:46px!important;
+    justify-content:center!important;
+  }
 }

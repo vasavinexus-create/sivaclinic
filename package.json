@@ -23,8 +23,12 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/camera": "^7.0.2",
     "@capacitor/cli": "^8.5.2",
     "@capacitor/core": "^8.5.2",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/share": "^8.0.1",
     "@powersync/react": "^2.0.1",
     "@powersync/web": "^2.4.1",
     "@supabase/ssr": "^0.12.7",

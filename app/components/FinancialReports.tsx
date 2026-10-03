@@ -5,6 +5,9 @@ import { RefreshCw } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { readAll } from "../../lib/read-all";
 import { businessDate, cashStatement, journalReport, ledgerBalances } from "../../lib/reporting.mjs";
+import { Capacitor } from "@capacitor/core";
+import { Filesystem, Directory, Encoding } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
 
 type Row = Record<string, any>;
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(value || 0);
@@ -164,6 +167,68 @@ export default function FinancialReports({ view, organizationId }: { view: strin
   const currentPage = Math.min(page, pages);
   const moneyKeys = new Set(["debit", "credit", "receipt", "payment", "balance", "amount", "pharmacy_revenue", "doctor_fee", "grand_total", "invoice_total"]);
 
+  const mobileReportRows = rows.slice((currentPage - 1) * 50, currentPage * 50).map((row, index) => {
+    const detail = row.ledger || row.particulars || row.invoice_no || row.purchase_no || row.supplier_name || row.voucher || row.date || `Entry ${index + 1}`;
+    let valueKey = "";
+    if (Number(row.debit || 0) !== 0) valueKey = "debit";
+    else if (Number(row.credit || 0) !== 0) valueKey = "credit";
+    else if (Number(row.receipt || 0) !== 0) valueKey = "receipt";
+    else if (Number(row.payment || 0) !== 0) valueKey = "payment";
+    else valueKey = ["balance", "amount", "grand_total", "invoice_total", "pharmacy_revenue", "doctor_fee"].find((key) => row[key] !== undefined && row[key] !== null) || "";
+    const rawValue = Number(valueKey ? row[valueKey] : 0);
+    const isCredit = valueKey === "credit" || valueKey === "payment" || view === "Payables Report" || row.group === "liability" || row.group === "income" || rawValue < 0;
+    const type = isCredit ? "credit" : "debit";
+    const extra = row.date && detail !== row.date ? row.date : row.group || row.payment_mode || row.status || "";
+    return {
+      id: row.id || `${index}-${detail}`,
+      detail: String(detail), extra: String(extra || ""), value: Math.abs(rawValue), type,
+      debit: Number(row.debit || row.receipt || 0),
+      credit: Number(row.credit || row.payment || 0),
+      metadata: columns.filter(([key]) => !moneyKeys.has(key) && row[key] != null && String(row[key]) !== "").map(([key, label]) => [label, String(row[key])]),
+    };
+  });
+  const mobileThreeColumn = ["Day Book", "Cash Book", "Daily Cash Book", "Bank Book", "Trial Balance", "GST Report", "GST/Tax Report"].includes(view);
+
+  const handlePrint = () => {
+    if (Capacitor.isNativePlatform()) {
+      alert("Printing directly is not fully supported on mobile apps. Please export as CSV instead or use the desktop app.");
+    } else {
+      window.print();
+    }
+  };
+
+  const exportCsv = async () => {
+    const quote = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const csv = [columns.map(([, label]) => quote(label)).join(","), ...rows.map((row) => columns.map(([key]) => quote(row[key])).join(","))].join("\r\n");
+    const filename = `${view.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${from}-${to}.csv`;
+    
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const result = await Filesystem.writeFile({
+          path: filename,
+          data: csv,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8
+        });
+        await Share.share({
+          title: filename,
+          url: result.uri,
+          dialogTitle: "Share CSV File"
+        });
+      } catch (err) {
+        console.error("Error sharing file", err);
+        alert("Could not share CSV file.");
+      }
+    } else {
+      const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+
   const isDoubleColumn = ["Balance Sheet", "Profit & Loss", "Current Balance"].includes(view);
   const renderDualTable = () => {
     let leftTitle = "";
@@ -195,7 +260,7 @@ export default function FinancialReports({ view, organizationId }: { view: strin
     
     const valKey = view === "Current Balance" ? "balance" : "amount";
     
-    return <div className="data-wrap"><table className="data-table">
+    return <div className="data-wrap desktop-report-table"><table className="data-table">
         <thead>
             <tr>
                 <th style={{width: '35%'}}>{leftTitle} (Ledger)</th>
@@ -223,16 +288,22 @@ export default function FinancialReports({ view, organizationId }: { view: strin
     </table></div>;
   };
 
-  return <div><div className="page-head"><h1>{view}</h1><button className="secondary" onClick={() => setRevision(r => r + 1)} title="Refresh report"><RefreshCw size={16}/> Refresh</button></div>
-    <div className="panel"><div className="v2-toolbar">
+  return <div className="financial-report-page"><div className="page-head"><h1>{view}</h1><div className="head-actions report-actions"><button className="secondary" onClick={handlePrint}>Print</button><button className="secondary" onClick={exportCsv}>CSV</button><button className="secondary" onClick={() => setRevision(r => r + 1)} title="Refresh report"><RefreshCw size={16}/> Refresh</button></div></div>
+    <div className="panel"><details className="report-filter-details" open><summary>Filters</summary><div className="v2-toolbar">
       <label className="field"><span>From</span><input type="date" value={from} onChange={e => setFrom(e.target.value)}/></label>
       <label className="field"><span>To</span><input type="date" value={to} onChange={e => setTo(e.target.value)}/></label>
       {(view === "Ledger Statement" || view === "Ledger Report") && <label className="field"><span>Ledger</span><select value={selectedLedger} onChange={e => setLedger(e.target.value)}>{names.map(n => <option key={n}>{n}</option>)}</select></label>}
-    </div>
+    </div></details>
     {loading ? <div className="loading-panel">Loading report...</div> : error ? <div role="alert" className="error-box">{error}</div> : <>
-      {!!summaries.length && <section className="summary-strip">{summaries.map(([label, amount]) => <div className="summary-card" key={label}><span>{label}</span><strong>{money(amount)}</strong></div>)}</section>}
+      {!!summaries.length && <section className="summary-strip report-summaries">{summaries.map(([label, amount]) => <div className="summary-card" key={label}><span>{label}</span><strong className={amount < 0 || /credit|payment|payable|liabilit/i.test(label) ? "credit-value" : "debit-value"}>{money(Math.abs(amount))}</strong></div>)}</section>}
       {journal.some((r: Row) => r.group === "unclassified") && ["Balance Sheet", "Profit & Loss", "Current Balance"].includes(view) && <div role="alert" className="auth-message">Unclassified journal ledgers exist. Assign their account groups before relying on these totals.</div>}
-      {rows.length ? (isDoubleColumn ? renderDualTable() : <div className="data-wrap"><table className="data-table"><thead><tr>{columns.map(([key, label]) => <th key={key}>{label}</th>)}</tr></thead><tbody>{rows.slice((currentPage - 1) * 50, currentPage * 50).map((row, index) => <tr key={row.id || index}>{columns.map(([key]) => <td key={key}>{moneyKeys.has(key) ? money(Number(row[key])) : String(row[key] ?? "-")}</td>)}</tr>)}</tbody></table></div>) : <div className="empty">No records for this period.</div>}
+      {rows.length ? <>
+        {isDoubleColumn ? renderDualTable() : <div className="data-wrap desktop-report-table"><table className="data-table"><thead><tr>{columns.map(([key, label]) => <th key={key}>{label}</th>)}</tr></thead><tbody>{rows.slice((currentPage - 1) * 50, currentPage * 50).map((row, index) => <tr key={row.id || index}>{columns.map(([key]) => <td key={key}>{moneyKeys.has(key) ? money(Number(row[key])) : String(row[key] ?? "-")}</td>)}</tr>)}</tbody></table></div>}
+        <div className={`mobile-report-list ${mobileThreeColumn ? "three-column-report" : "two-column-report"}`} aria-label={`${view} mobile report`}>
+          <div className="mobile-report-heading"><span>Ledger / Details</span>{mobileThreeColumn ? <><span>Debit</span><span>Credit</span></> : <span>Amount</span>}</div>
+          {mobileReportRows.map((row) => <details className="mobile-report-entry" key={row.id}><summary className="mobile-report-row"><div><strong>{row.detail}</strong>{row.extra && <small>{row.extra}</small>}</div>{mobileThreeColumn ? <><b className="debit-value">{row.debit ? money(row.debit) : "—"}</b><b className="credit-value">{row.credit ? money(row.credit) : "—"}</b></> : <b className={`${row.type}-value`}>{money(row.value)}</b>}</summary>{row.metadata.length > 0 && <div className="mobile-report-meta">{row.metadata.map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div>}</details>)}
+        </div>
+      </> : <div className="empty">No records for this period.</div>}
       <div className="pagination-bar"><span>{rows.length} records</span><div><button className="secondary" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>Prev</button><span>Page {currentPage} / {pages}</span><button className="secondary" disabled={currentPage >= pages} onClick={() => setPage(currentPage + 1)}>Next</button></div></div>
     </>}
     </div></div>;

@@ -11,6 +11,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Capacitor's Android plugins compile against Java 21. Prefer Android Studio's
+# bundled runtime so command-line builds use the same JDK as Android Studio.
+$androidStudioJbr = "C:\Program Files\Android\Android Studio\jbr"
+if (Test-Path (Join-Path $androidStudioJbr "bin\java.exe")) {
+  $env:JAVA_HOME = $androidStudioJbr
+  $env:Path = "$(Join-Path $androidStudioJbr 'bin');$env:Path"
+}
+
 function Invoke-Checked {
   param(
     [Parameter(Mandatory = $true)][string]$FilePath,
@@ -76,7 +84,7 @@ function Ensure-GradleTrustStore {
     $index++
     $certPath = Join-Path $certDir "$($cert.Thumbprint).cer"
     [System.IO.File]::WriteAllBytes($certPath, $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert))
-    $keytoolOutput = & keytool.exe -importcert -noprompt -storetype JKS -keystore $trustStore -storepass changeit -alias "winroot-$index" -file $certPath 2>&1
+    $cmdArgs = "-importcert -noprompt -storetype JKS -keystore `"$trustStore`" -storepass changeit -alias `"winroot-$index`" -file `"$certPath`""; cmd.exe /c "keytool.exe $cmdArgs 2>nul"
     if ($LASTEXITCODE -ne 0) { throw "Failed to import certificate into Java truststore: $($cert.Subject)" }
   }
   Write-Host "Imported $index Windows root certificates into Java truststore. Skipped $skippedCertCount weak/legacy certificates."
@@ -123,9 +131,15 @@ Write-Host "Building static Next.js app and syncing Capacitor..."
 Invoke-Checked "npm.cmd" @("run", "mobile:build")
 
 $capacitorGradleFiles = @(
+  "android\app\build.gradle",
   "android\app\capacitor.build.gradle",
   "node_modules\@capacitor\android\capacitor\build.gradle"
 )
+if (Test-Path "node_modules\@capacitor") {
+  Get-ChildItem -Path "node_modules\@capacitor" -Recurse -Filter "build.gradle" | ForEach-Object {
+    $capacitorGradleFiles += $_.FullName
+  }
+}
 Write-Host "Patching Capacitor Java target to match installed JDK 17..."
 foreach ($capacitorGradle in $capacitorGradleFiles) {
   if (Test-Path $capacitorGradle) {
