@@ -1,16 +1,17 @@
-# -*- coding: utf-8 -*-
-import codecs
-import re
+﻿import re
 
-with codecs.open('app/v2/V2App.tsx', 'r', 'utf-8') as f:
-    code = f.read()
+with open('app/v2/V2App.tsx', 'r', encoding='utf-8') as f:
+    v2app = f.read()
 
-pattern = r'const accountReportPages = new Set\(\[.*?\]\);'
-replacement = 'const accountReportPages = new Set([\n  "day-book", "cash-book", "bank-book", "sales-report", "purchase-report", "expense-report", "ledger-report", "trial-balance",\n  "current-balance", "balance-sheet", "profit-loss", "receivables-report", "payables-report", "gst-report", "outstanding-report", "reports", "cash-ledger", "sales-account", "ledger-statement"\n]);'
+# Add import
+if 'ClinicManagementWorkflow' not in v2app:
+    v2app = v2app.replace('import { getV2Module', 'import { ClinicManagementWorkflow } from "./components/AdminWorkflows";\nimport { getV2Module')
 
-code = re.sub(pattern, replacement, code, flags=re.DOTALL)
+# Add to PAGE_REGISTRY
+if '"clinic-management":' not in v2app:
+    v2app = v2app.replace('"settings":               SettingsWorkflow,', '"settings":               SettingsWorkflow,\n    "clinic-management":      ClinicManagementWorkflow,')
 
-with codecs.open('app/v2/V2App.tsx', 'w', 'utf-8') as f:
-    f.write(code)
+with open('app/v2/V2App.tsx', 'w', encoding='utf-8') as f:
+    f.write(v2app)
 
-print('Fixed accountReportPages')
+print("Done fixing V2App.tsx")

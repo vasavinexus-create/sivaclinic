@@ -28,6 +28,7 @@ import V2Sidebar from "./components/V2Sidebar";
 import V2Topbar from "./components/V2Topbar";
 import UsersPage from "../components/UsersPage";
 import FinancialReports from "../components/FinancialReports";
+import { ClinicManagementWorkflow } from "./components/AdminWorkflows";
 import { getV2Module, v2Nav } from "./lib/modules";
 import { Organization, Profile } from "./lib/types";
 import { money } from "./lib/format";
@@ -185,6 +186,7 @@ const PAGE_REGISTRY: Record<string, any> = {
   
   "supplier-ledger":        SupplierLedgerWorkflow,
   "settings":               SettingsWorkflow,
+    "clinic-management":      ClinicManagementWorkflow,
   "users-and-roles":        UsersPage,
   "rate-edit-verification": RateEditVerificationWorkflow,
   "deleted-bills-audit":    DeletedBillsAuditWorkflow,
