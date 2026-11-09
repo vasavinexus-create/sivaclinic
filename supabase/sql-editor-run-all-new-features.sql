@@ -460,4 +460,85 @@ alter table if exists public.sales
   add constraint sales_special_discount_percent_range
   check (special_discount_percent >= 0 and special_discount_percent <= 100);
 
+-- ============================================================================
+-- Negative Stock Billing, Pack/Unit, Sale Returns & Accounting Ledger Updates
+-- ============================================================================
+alter table public.medicine_batches
+  drop constraint if exists medicine_batches_current_stock_check;
+
+alter table public.stock_movements
+  drop constraint if exists stock_movements_balance_quantity_check;
+
+do $$
+declare
+  r record;
+begin
+  for r in
+    select con.conname
+    from pg_constraint con
+    join pg_class rel on rel.oid = con.conrelid
+    join pg_namespace nsp on nsp.oid = rel.relnamespace
+    where nsp.nspname = 'public'
+      and rel.relname = 'medicine_batches'
+      and con.contype = 'c'
+      and (
+        pg_get_constraintdef(con.oid) ilike '%current_stock%>=%0%'
+        or pg_get_constraintdef(con.oid) ilike '%stock_unit_qty%>=%0%'
+      )
+  loop
+    execute format('alter table public.medicine_batches drop constraint if exists %I', r.conname);
+  end loop;
+
+  for r in
+    select con.conname
+    from pg_constraint con
+    join pg_class rel on rel.oid = con.conrelid
+    join pg_namespace nsp on nsp.oid = rel.relnamespace
+    where nsp.nspname = 'public'
+      and rel.relname = 'stock_movements'
+      and con.contype = 'c'
+      and pg_get_constraintdef(con.oid) ilike '%balance_quantity%>=%0%'
+  loop
+    execute format('alter table public.stock_movements drop constraint if exists %I', r.conname);
+  end loop;
+end $$;
+
+alter table public.sale_items
+  add column if not exists returned_quantity numeric(14,2) not null default 0;
+
+alter table public.medicine_batches
+  add column if not exists stock_unit_qty numeric(14,2),
+  add column if not exists purchase_unit text default 'unit',
+  add column if not exists sale_unit text default 'unit',
+  add column if not exists units_per_purchase_unit numeric(14,2) default 1,
+  add column if not exists purchase_pack_qty numeric(14,3),
+  add column if not exists free_pack_qty numeric(14,3) default 0;
+
+alter table public.purchase_items
+  add column if not exists purchase_unit text default 'unit',
+  add column if not exists sale_unit text default 'unit',
+  add column if not exists units_per_purchase_unit numeric(14,2) default 1,
+  add column if not exists purchase_pack_qty numeric(14,3),
+  add column if not exists free_pack_qty numeric(14,3) default 0,
+  add column if not exists stock_unit_qty numeric(14,2),
+  add column if not exists purchase_rate_per_unit numeric(14,4);
+
+update public.medicine_batches
+set stock_unit_qty = current_stock
+where stock_unit_qty is distinct from current_stock;
+
+create index if not exists medicine_batches_negative_stock_idx
+  on public.medicine_batches (organization_id, product_id, created_at asc)
+  where current_stock < 0;
+
+do $$
+begin
+  if to_regclass('public.journal_lines') is not null then
+    update public.journal_lines set ledger_name = 'Purchase' where ledger_name = 'Purchases';
+    update public.journal_lines set ledger_name = 'Supplier Payable' where ledger_name = 'Accounts Payable';
+    update public.journal_lines set ledger_name = 'Patient Receivable' where ledger_name = 'Accounts Receivable';
+  end if;
+end $$;
+
 notify pgrst, 'reload schema';
+
