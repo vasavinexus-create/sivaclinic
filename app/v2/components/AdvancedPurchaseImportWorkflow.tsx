@@ -6,6 +6,7 @@ import {
   PackagePlus, Plus, Search, ShieldAlert, Sparkles, Upload, X, Trash2
 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
+import { receivePurchaseStockWithNegativeOffset } from "../../../lib/inventory-stock";
 import { money } from "../lib/format";
 import { normalizeDescription, scoreProductSuggestion } from "../lib/normalization";
 import { postJournal } from "../lib/accounting";
@@ -866,7 +867,8 @@ const stitchImages = async (files: File[]): Promise<string> => {
         return;
       }
 
-      // 2. Loop through items & create Medicine Batches, Purchase Items, Stock Movements
+      // 2. Loop through items & create Medicine Batches, Purchase Items, Stock Movements (with negative stock reconciliation)
+      let totalNegativeOffset = 0;
       for (const item of items) {
         const unitsPerPurchaseUnit = Number(item.units_per_purchase_unit || 1) || 1;
         const purchasePackQty = Number(item.quantity || 0);
@@ -874,77 +876,35 @@ const stitchImages = async (files: File[]): Promise<string> => {
         const totalStockQty = (purchasePackQty + freePackQty) * unitsPerPurchaseUnit;
         const freeStockQty = freePackQty * unitsPerPurchaseUnit;
         const purchaseRatePerUnit = Number(item.rate || 0) / unitsPerPurchaseUnit;
+        const sellingRatePerUnit =
+          (Number(item.selling_rate) > 0 ? Number(item.selling_rate) : Number(item.mrp || 0)) / unitsPerPurchaseUnit;
 
-        const { data: batch, error: batchErr } = await supabase
-          .from("medicine_batches")
-          .insert({
-            organization_id: profile.organization_id,
+        const { offsetTotal } = await receivePurchaseStockWithNegativeOffset(supabase, {
+          organizationId: profile.organization_id,
+          purchaseId: purchase.id,
+          purchaseNo,
+          supplierId,
+          createdBy: profile.id,
+          item: {
             product_id: item.mapped_product_id!,
             batch_number: item.batch_no,
             expiry_date: item.expiry_date,
-            supplier_id: supplierId,
-            purchase_id: purchase.id,
-            quantity_received: totalStockQty,
-            free_quantity: freeStockQty,
-            current_stock: totalStockQty,
-            purchase_rate: purchaseRatePerUnit,
-            mrp: item.mrp,
-            selling_rate: (Number(item.selling_rate) > 0 ? Number(item.selling_rate) : Number(item.mrp || 0)) / unitsPerPurchaseUnit,
-            gst_percent: item.gst_percent,
-            purchase_unit: item.purchase_unit || "unit",
-            sale_unit: item.sale_unit || "unit",
-            units_per_purchase_unit: unitsPerPurchaseUnit,
             purchase_pack_qty: purchasePackQty,
             free_pack_qty: freePackQty,
-            stock_unit_qty: totalStockQty
-          })
-          .select("id")
-          .single();
-
-        if (batchErr || !batch) {
-          throw new Error(`Batch save failed for ${item.supplier_description}: ${batchErr?.message || "No batch returned"}`);
-        }
-
-        const { error: itemErr } = await supabase.from("purchase_items").insert({
-          organization_id: profile.organization_id,
-          purchase_id: purchase.id,
-          product_id: item.mapped_product_id!,
-          batch_id: batch.id,
-          quantity: totalStockQty,
-          free_quantity: 0,
-          rate: purchaseRatePerUnit,
-          gst_percent: item.gst_percent,
-          discount: item.discount_amount,
-          line_total: item.line_total,
-          purchase_unit: item.purchase_unit || "unit",
-          sale_unit: item.sale_unit || "unit",
-          units_per_purchase_unit: unitsPerPurchaseUnit,
-          purchase_pack_qty: purchasePackQty,
-          free_pack_qty: freePackQty,
-          stock_unit_qty: totalStockQty,
-          purchase_rate_per_unit: purchaseRatePerUnit
+            units_per_purchase_unit: unitsPerPurchaseUnit,
+            total_stock_qty: totalStockQty,
+            free_stock_qty: freeStockQty,
+            purchase_rate_per_unit: purchaseRatePerUnit,
+            mrp: Number(item.mrp || 0),
+            selling_rate_per_unit: sellingRatePerUnit,
+            gst_percent: Number(item.gst_percent || 0),
+            discount_amount: Number(item.discount_amount || 0),
+            line_total: Number(item.line_total || 0),
+            purchase_unit: item.purchase_unit || "unit",
+            sale_unit: item.sale_unit || "unit"
+          }
         });
-
-        if (itemErr) {
-          throw new Error(`Purchase item save failed for ${item.supplier_description}: ${itemErr.message}`);
-        }
-
-        const { error: stockErr } = await supabase.from("stock_movements").insert({
-          organization_id: profile.organization_id,
-          product_id: item.mapped_product_id!,
-          batch_id: batch.id,
-          movement_type: "purchase",
-          reference_type: "purchase",
-          reference_id: purchase.id,
-          reference_number: purchaseNo,
-          in_quantity: totalStockQty,
-          balance_quantity: totalStockQty,
-          created_by: profile.id
-        });
-
-        if (stockErr) {
-          throw new Error(`Stock movement failed for ${item.supplier_description}: ${stockErr.message}`);
-        }
+        totalNegativeOffset += offsetTotal;
 
         // 3. Save / Upsert Confirmed Description -> Product Mappings
         if (item.supplier_description && item.mapped_product_id && item.save_mapping !== false) {
@@ -1000,7 +960,11 @@ const stitchImages = async (files: File[]): Promise<string> => {
       setSavingApproval(false);
       if (currentDraftId) await supabase.from("purchase_imports").delete().eq("id", currentDraftId);
       setStep("approved");
-      notify(`Successfully approved & created purchase ${purchaseNo}`);
+      notify(
+        totalNegativeOffset > 0
+          ? `Successfully approved & created purchase ${purchaseNo} (auto-filled ${totalNegativeOffset} negative stock units)`
+          : `Successfully approved & created purchase ${purchaseNo}`
+      );
     } catch (err: any) {
       setSavingApproval(false);
       notify(err.message || "Failed to approve purchase");

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
+import { deductSaleItemStock } from "../../../../lib/inventory-stock";
 
 // Validation schema for sales
 const SaleItemSchema = z.object({
@@ -12,7 +13,7 @@ const SaleItemSchema = z.object({
   mrp_unit_rate: z.number().min(0),
   sales_discount_percent: z.number().min(0).max(100).nullable().optional(),
   gst_percent: z.number().min(0).nullable().optional(),
-  current_stock: z.number().min(0),
+  current_stock: z.number(),
   original_selling_rate: z.number().nullable().optional(),
   rate_edited: z.boolean().nullable().optional(),
   mrp: z.number().min(0),
@@ -99,10 +100,8 @@ export async function POST(request: NextRequest) {
 
     if (saleError || !sale) throw saleError;
 
-    // 2. Insert items and update stock (Sequentially or in parallel, Supabase JS uses multiple queries)
+    // 2. Insert items and update stock (allowing negative stock balances)
     for (const item of cart) {
-      const balance = item.current_stock - item.qty;
-      
       await adminClient.from("sale_items").insert({
         organization_id: profile.organization_id,
         sale_id: sale.id,
@@ -120,19 +119,26 @@ export async function POST(request: NextRequest) {
         line_total: item.selling_rate * item.qty
       });
 
-      await adminClient.from("medicine_batches").update({ current_stock: balance }).eq("id", item.batch_id);
-
-      await adminClient.from("stock_movements").insert({
-        organization_id: profile.organization_id,
-        product_id: item.product_id,
-        batch_id: item.batch_id,
-        movement_type: "sale",
-        reference_type: "sale",
-        reference_id: sale.id,
-        reference_number: invoice,
-        out_quantity: item.qty,
-        balance_quantity: balance,
-        created_by: profile.id
+      await deductSaleItemStock(adminClient, {
+        organizationId: profile.organization_id,
+        saleId: sale.id,
+        invoiceNo: invoice,
+        createdBy: profile.id,
+        referenceType: sale_type === "inpatient" ? "inpatient_bill" : "sale",
+        item: {
+          product_id: item.product_id,
+          batch_id: item.batch_id,
+          qty: item.qty,
+          selling_rate: item.selling_rate,
+          original_selling_rate: item.original_selling_rate ?? item.selling_rate,
+          rate_edited: !!item.rate_edited,
+          mrp: item.mrp,
+          mrp_unit_rate: item.mrp_unit_rate,
+          original_sales_discount_percent: item.original_sales_discount_percent ?? item.sales_discount_percent ?? 0,
+          sales_discount_percent: item.sales_discount_percent ?? 0,
+          gst_percent: item.gst_percent || 0,
+          current_stock: item.current_stock
+        }
       });
     }
 
@@ -168,7 +174,7 @@ export async function POST(request: NextRequest) {
 
       if (journalData) {
         await adminClient.from("journal_lines").insert([
-          { organization_id: profile.organization_id, journal_entry_id: journalData.id, ledger_name: sale_type === "inpatient" ? "Accounts Receivable" : "Cash", debit: total, credit: 0, line_order: 1 },
+          { organization_id: profile.organization_id, journal_entry_id: journalData.id, ledger_name: sale_type === "inpatient" ? "Patient Receivable" : "Cash", debit: total, credit: 0, line_order: 1 },
           { organization_id: profile.organization_id, journal_entry_id: journalData.id, ledger_name: "Pharmacy Sales", debit: 0, credit: pharmacyRevenue, line_order: 2 }
         ]);
       }

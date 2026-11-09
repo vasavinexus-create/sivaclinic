@@ -32,17 +32,12 @@ export function SettingsWorkflow({ profile, onOrganizationChange, notify }: { pr
         gemini_model: form.get("gemini_model") || "gemini-3.6-flash"
       };
 
-      const res = await fetch("/api/v2/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const result = await res.json();
+      const res = await supabase!.from("organizations").update(payload).eq("id", profile.organization_id).select().single();
       
-      if (!res.ok) throw new Error(result.error || "Failed to save settings");
+      if (res.error) throw new Error(res.error.message || "Failed to save settings");
       
       mutate(`org:${profile.organization_id}`);
-      if (onOrganizationChange) onOrganizationChange(result.data as Organization);
+      if (onOrganizationChange) onOrganizationChange(res.data as any);
       notify("Settings updated");
     } catch (e: any) {
       notify(e.message || "Failed to update settings");

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, LoaderCircle, Pencil, Plus, RefreshCw, Search, X } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
+import { getEffectiveStock } from "../../../lib/inventory-stock";
 import { fmtDate, money, nextCode } from "../lib/format";
 import { pageSizeOptions } from "../lib/modules";
 import { usePagedQuery } from "../lib/usePagedQuery";
@@ -17,14 +18,29 @@ function valueAt(row: Row, key: string) {
   return key.split(".").reduce((value: any, part) => value?.[part], row);
 }
 
+function formatPackStock(row: Row) {
+  const val = getEffectiveStock(row);
+  const conv = Math.max(1, Number(row.product?.default_units_per_purchase_unit || 1));
+  const unit = row.product?.purchase_unit || "Pack";
+  if (val < 0) {
+    const absVal = Math.abs(val);
+    const packs = Math.floor(absVal / conv);
+    const rem = absVal % conv;
+    if (packs === 0) return `${val} units (Neg)`;
+    return rem > 0 ? `-${packs} ${unit} - ${rem} (${val} Neg)` : `-${packs} ${unit} (${val} Neg)`;
+  }
+  const packs = Math.floor(val / conv);
+  const rem = val % conv;
+  return rem > 0 ? `${packs} ${unit} + ${rem}` : `${packs} ${unit}`;
+}
+
 function renderCell(row: Row, key: string, moduleKey?: string) {
   if (key === "current_stock" && (moduleKey === "low-stock" || moduleKey === "expiry-alerts")) {
-    const val = valueAt(row, key) || 0;
-    const conv = row.product?.default_units_per_purchase_unit || 1;
-    const packs = Math.floor(val / conv);
-    const rem = val % conv;
-    const unit = row.product?.purchase_unit || "Pack";
-    return rem > 0 ? `${packs} ${unit} + ${rem}` : `${packs} ${unit}`;
+    return formatPackStock(row);
+  }
+  if (key === "current_stock" && moduleKey === "inventory") {
+    const val = getEffectiveStock(row);
+    return val < 0 ? `${val} (Neg)` : String(val);
   }
   const value = valueAt(row, key);
   if (key.includes("date") || key.includes("_at")) return fmtDate(value);
@@ -121,22 +137,15 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
     }
     
     try {
-      const { data: { session } } = await supabase!.auth.getSession();
-      const res = await fetch("/api/v2/crud", {
-        method: editing ? "PUT" : "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          ...(session?.access_token ? { "Authorization": `Bearer ${session.access_token}` } : {})
-        },
-        body: JSON.stringify({
-          table: module.table,
-          id: editing?.id,
-          payload
-        })
-      });
+      const safePayload = { ...payload, organization_id: profile.organization_id };
+      let res;
+      if (editing) {
+        res = await supabase!.from(module.table).update(safePayload).eq("id", editing.id).eq("organization_id", profile.organization_id).select("id").single();
+      } else {
+        res = await supabase!.from(module.table).insert(safePayload).select("id").single();
+      }
 
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || "Save failed");
+      if (res.error) throw new Error(res.error.message || "Save failed");
 
       notify(`${module.title} ${editing ? "updated" : "saved"}`);
       close();
@@ -223,14 +232,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
                   <tr key={r.id}>
                     <td>{valueAt(r, "product.name")}</td>
                     <td>{valueAt(r, "batch_number")}</td>
-                    <td>{(() => {
-  const v = valueAt(r, "current_stock") || 0;
-  const c = r.product?.default_units_per_purchase_unit || 1;
-  const p = Math.floor(v / c);
-  const m = v % c;
-  const u = r.product?.purchase_unit || "Pack";
-  return m > 0 ? `${p} ${u} + ${m}` : `${p} ${u}`;
-})()}</td>
+                    <td>{formatPackStock(r)}</td>
                     <td>
                       <input type="number" min="1" value={orderQuantities[r.id] || ""} onChange={e => setOrderQuantities({...orderQuantities, [r.id]: parseInt(e.target.value) || 0})} style={{ width: 100, padding: 4 }} />
                     </td>
@@ -398,14 +400,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
                         <td style={{ padding: 12, border: '1px solid #ccc', fontWeight: 'bold' }}>{valueAt(r, "product.name")}</td>
                         <td style={{ padding: 12, border: '1px solid #ccc' }}>{valueAt(r, "batch_number")}</td>
                         <td style={{ padding: 12, border: '1px solid #ccc', color: '#d32f2f' }}>{fmtDate(valueAt(r, "expiry_date"))}</td>
-                        <td style={{ padding: 12, border: '1px solid #ccc', textAlign: 'center', fontSize: 16, fontWeight: 'bold' }}>{(() => {
-  const v = valueAt(r, 'current_stock') || 0;
-  const c = r.product?.default_units_per_purchase_unit || 1;
-  const p = Math.floor(v / c);
-  const m = v % c;
-  const u = r.product?.purchase_unit || 'Pack';
-  return m > 0 ? `${p} ${u} + ${m}` : `${p} ${u}`;
-})()}</td>
+                        <td style={{ padding: 12, border: '1px solid #ccc', textAlign: 'center', fontSize: 16, fontWeight: 'bold' }}>{formatPackStock(r)}</td>
                       </tr>
                     ))}
                   </tbody>

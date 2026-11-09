@@ -13,15 +13,15 @@ export function RateEditVerificationWorkflow({ profile, notify }: { profile: Pro
   const load = () => {
     if (!supabase) return;
     setLoading(true);
-    supabase.from("sales").select("id,invoice_no,sold_at,grand_total,gross_total,special_discount_percent,special_discount_amount,rate_edit_verified,patient:patients(patient_id,name,mobile),sale_items(quantity,unit_rate,original_unit_rate,rate_edited,mrp_unit_rate,original_sales_discount_percent,sales_discount_percent,product:products(name))").neq("status","cancelled").eq("has_rate_edit", true).eq("rate_edit_verified", tab === "verified").order("sold_at", { ascending: false }).limit(200).then(({ data }) => {
+    supabase.from("sales").select("id,invoice_no,sold_at,grand_total,gross_total,special_discount_percent,special_discount_amount,rate_edit_verified,patient:patients(patient_id,name,mobile),sale_items(quantity,unit_rate,original_unit_rate,rate_edited,mrp_unit_rate,original_sales_discount_percent,sales_discount_percent,product:products(name))").eq("organization_id", profile.organization_id).neq("status","cancelled").eq("has_rate_edit", true).eq("rate_edit_verified", tab === "verified").order("sold_at", { ascending: false }).limit(200).then(({ data }) => {
       setRows(data || []);
       setLoading(false);
     });
   };
-  useEffect(load, [tab]);
+  useEffect(load, [tab, profile.organization_id]);
   const verify = async (row: Row) => {
     if (!supabase) return;
-    const { error } = await supabase.from("sales").update({ rate_edit_verified: true, rate_edit_verified_at: new Date().toISOString(), rate_edit_verified_by: profile.id }).eq("id", row.id);
+    const { error } = await supabase.from("sales").update({ rate_edit_verified: true, rate_edit_verified_at: new Date().toISOString(), rate_edit_verified_by: profile.id }).eq("id", row.id).eq("organization_id", profile.organization_id);
     notify(error?.message || "Rate edit verified");
     load();
   };

@@ -18,6 +18,7 @@ import { PurchaseImportWorkflow } from "./components/PurchaseImportWorkflow";
 import { AdvancedPurchaseImportWorkflow } from "./components/AdvancedPurchaseImportWorkflow";
 import { MappingManagementWorkflow } from "./components/MappingManagementWorkflow";
 import { MedicineSalesWorkflow } from "./components/InventoryReports";
+import { StockResetWorkflow } from "./components/StockResetWorkflow";
 import { RateEditVerificationWorkflow } from "./components/VerificationWorkflows";
 import { SalesWorkflow } from "./components/SalesWorkflows";
 import { DoctorFeesPendingWorkflow } from "./components/DoctorFeesPendingWorkflow";
@@ -32,6 +33,7 @@ import { ClinicManagementWorkflow } from "./components/V1ClinicManagement";
 import { getV2Module, v2Nav } from "./lib/modules";
 import { Organization, Profile } from "./lib/types";
 import { money } from "./lib/format";
+import { getEffectiveStock } from "../../lib/inventory-stock";
 import { X, CheckCircle2 as CheckIcon } from "lucide-react";
 
 // ─── Loading / Auth screens ────────────────────────────────────────────────
@@ -49,12 +51,6 @@ function SignInNotice() {
     e.preventDefault();
     setLoading(true);
     setError('');
-    
-    if (email === 'demoadmin@sivacare.com' && password === 'admin') {
-      const { error } = await supabase!.auth.signInWithPassword({ email: 'sivaclinic@gmail.com', password: 'password123' });
-      if (error) { setError(error.message); setLoading(false); }
-      return;
-    }
     
     let loginEmail = email.trim();
     if (!loginEmail.includes("@")) {
@@ -114,7 +110,7 @@ function V2Dashboard({ profile }: { profile: Profile }) {
       supabase.from("products").select("id", { count: "exact", head: true }).eq("organization_id", profile.organization_id),
       supabase.from("sales").select("grand_total").eq("organization_id", profile.organization_id).eq("status", "completed"),
       supabase.from("purchases").select("invoice_total").eq("organization_id", profile.organization_id).neq("status", "cancelled"),
-      supabase.from("medicine_batches").select("current_stock").eq("organization_id", profile.organization_id).gt("current_stock", 0),
+      supabase.from("medicine_batches").select("current_stock,stock_unit_qty").eq("organization_id", profile.organization_id),
       supabase.from("expenses").select("amount").eq("organization_id", profile.organization_id),
     ]).then(([patients, medicines, sales, purchases, stock, expenses]) => {
       setStats({
@@ -122,7 +118,7 @@ function V2Dashboard({ profile }: { profile: Profile }) {
         medicines: medicines.count || 0,
         sales: (sales.data || []).reduce((sum, row: any) => sum + Number(row.grand_total || 0), 0),
         purchases: (purchases.data || []).reduce((sum, row: any) => sum + Number(row.invoice_total || 0), 0),
-        stock: (stock.data || []).reduce((sum, row: any) => sum + Number(row.current_stock || 0), 0),
+        stock: (stock.data || []).reduce((sum, row: any) => sum + getEffectiveStock(row), 0),
         expenses: (expenses.data || []).reduce((sum, row: any) => sum + Number(row.amount || 0), 0),
       });
     });
@@ -179,6 +175,7 @@ const PAGE_REGISTRY: Record<string, any> = {
   "adv-purchase-import":    AdvancedPurchaseImportWorkflow,
   "product-mappings":       MappingManagementWorkflow,
   "medicine-sales":         MedicineSalesWorkflow,
+  "stock-reset":            StockResetWorkflow,
   "supplier-payments":      SupplierPaymentWorkflow,
   "purchase-history":       PurchaseHistoryWorkflow,
   "inpatient-payment":      InpatientPaymentWorkflow,

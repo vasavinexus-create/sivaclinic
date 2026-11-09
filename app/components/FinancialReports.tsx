@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import { getEffectiveStock } from "../../lib/inventory-stock";
 import { readAll } from "../../lib/read-all";
 import { businessDate, cashStatement, journalReport, ledgerBalances } from "../../lib/reporting.mjs";
 import { Capacitor } from "@capacitor/core";
@@ -41,10 +42,10 @@ export default function FinancialReports({ view, organizationId }: { view: strin
       readAll(() => query("sales", "id,invoice_no,sold_at,pharmacy_revenue,doctor_fee,grand_total,payment_mode,status").neq("status", "cancelled").gte("sold_at", `${from}T00:00:00+05:30`).lte("sold_at", end).order("sold_at").order("id")),
       readAll(() => query("payments", "id,sale_id,paid_at,amount,mode,sale:sales(invoice_no)").lte("paid_at", end).order("paid_at").order("id")),
       readAll(() => query("cash_ledger", "id,occurred_at,entry_type,category,reference_type,reference_id,amount,payment_mode").lte("occurred_at", end).order("occurred_at").order("id")),
-      readAll(() => query("medicine_batches", "id,current_stock,purchase_rate").order("id")),
+      readAll(() => query("medicine_batches", "id,current_stock,stock_unit_qty,purchase_rate").order("id")),
       readAll(() => query("supplier_ledger", "id,debit,credit").lte("occurred_on", to).order("id")),
         readAll(() => query("purchases", "id,purchase_no,invoice_date,invoice_total,status,supplier:suppliers(name)").neq("status", "cancelled").gte("invoice_date", `${from}`).lte("invoice_date", end).order("invoice_date").order("id")),
-        readAll(() => query("sale_items", "id,quantity,sale:sales!inner(status,sold_at),batch:medicine_batches(purchase_rate)").neq("sale.status", "cancelled").gte("sale.sold_at", `${from}T00:00:00+05:30`).lte("sale.sold_at", end).order("id")),
+        readAll(() => query("sale_items", "id,quantity,returned_quantity,sale:sales!inner(status,sold_at),batch:medicine_batches(purchase_rate)").neq("sale.status", "cancelled").gte("sale.sold_at", `${from}T00:00:00+05:30`).lte("sale.sold_at", end).order("id")),
     ]).then(([journals, ledgers, sales, payments, cash, batches, supplier, purchases, saleItems]) => {
       if (alive) setData({ journals, ledgers, sales, payments, cash, batches, supplier, purchases, saleItems });
     }).catch(e => { if (alive) setError(e.message || "Report could not be loaded."); })
@@ -94,7 +95,7 @@ export default function FinancialReports({ view, organizationId }: { view: strin
     columns = [["date", "Date"], ["invoice_no", "Invoice"], ["pharmacy_revenue", "Pharmacy revenue"], ["doctor_fee", "Doctor fee"], ["grand_total", "Bill total"], ["payment_mode", "Payment mode"], ["status", "Status"]];
     summaries = [["Active bill total", rows.reduce((sum, r) => sum + Number(r.grand_total), 0)]];
   } else if (view === "Profit & Loss") {
-    const cogsValue = (data.saleItems || []).reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.batch?.purchase_rate || 0)), 0);
+    const cogsValue = (data.saleItems || []).reduce((sum, item) => sum + (Math.max(0, Number(item.quantity || 0) - Number(item.returned_quantity || 0)) * Number(item.batch?.purchase_rate || 0)), 0);
     rows = ["income", "expense"].flatMap(group => {
       const byLedger = new Map<string, number>();
       period.filter((r: Row) => r.group === group).forEach((r: Row) => byLedger.set(r.ledger, (byLedger.get(r.ledger) || 0) + (group === "income" ? r.credit - r.debit : r.debit - r.credit)));
@@ -134,7 +135,7 @@ export default function FinancialReports({ view, organizationId }: { view: strin
     columns = [["date", "Date"], ["ledger", "Ledger"], ["particulars", "Particulars"], ["debit", "Debit (Paid)"], ["credit", "Credit (Collected)"]];
     summaries = [["GST Collected", rows.reduce((s, r) => s + r.credit, 0)], ["GST Paid", rows.reduce((s, r) => s + r.debit, 0)]];
   } else if (view === "Balance Sheet") {
-    const cogsValue = (data.saleItems || []).reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.batch?.purchase_rate || 0)), 0);
+    const cogsValue = (data.saleItems || []).reduce((sum, item) => sum + (Math.max(0, Number(item.quantity || 0) - Number(item.returned_quantity || 0)) * Number(item.batch?.purchase_rate || 0)), 0);
     
     rows = balances.filter((r: Row) => !["income", "expense"].includes(r.group)).map((r: Row) => ({ ...r, amount: ["liability", "equity"].includes(r.group) ? -r.balance : r.balance }));
     
@@ -160,7 +161,7 @@ export default function FinancialReports({ view, organizationId }: { view: strin
   } else if (view === "Current Balance") {
     rows = balances;
     columns = [["ledger", "Ledger"], ["group", "Type"], ["balance", "Balance (debit - credit)"]];
-    summaries = [["Cash as of end date", cash.closing], ["Supplier payable as of end date", data.supplier.reduce((s, r) => s + Number(r.debit) - Number(r.credit), 0)], ["Live inventory value", data.batches.reduce((s, r) => s + Number(r.current_stock) * Number(r.purchase_rate), 0)]];
+    summaries = [["Cash as of end date", cash.closing], ["Supplier payable as of end date", data.supplier.reduce((s, r) => s + Number(r.debit) - Number(r.credit), 0)], ["Live inventory value", data.batches.reduce((s, r) => s + Math.max(0, getEffectiveStock(r)) * Number(r.purchase_rate), 0)]];
   }
   
   const pages = Math.max(1, Math.ceil(rows.length / 50));

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, LoaderCircle, Plus, Trash2 } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 import { canDeleteBill, cancelBill } from "../../../lib/bill-cancellation";
+import { receivePurchaseStockWithNegativeOffset } from "../../../lib/inventory-stock";
 import { money } from "../lib/format";
 import { postJournal } from "../lib/accounting";
 import { Profile, Row } from "../lib/types";
@@ -45,7 +46,7 @@ export function PurchaseWorkflow({ profile, notify }: { profile: Profile; notify
       notify("Enter batch, expiry, qty and rate");
       return;
     }
-    setItems((rows) => [...rows, { product_id: productId, product_name: product.name, product_code: product.product_id, batch_number: data.get("batch_number"), expiry_date: data.get("expiry_date"), quantity: qty, free_quantity: free, units_per_purchase_unit: units, stock_qty: (qty + free) * units, purchase_rate: rate, purchase_rate_per_unit: rate / units, sales_discount_percent: salesDiscount, selling_rate: Number(data.get("mrp") || 0) / units, mrp: Number(data.get("mrp") || 0), gst_percent: gst, discount, line_total: lineTotal }]);
+    setItems((rows) => [...rows, { product_id: productId, product_name: product.name, product_code: product.product_id, purchase_unit: product.purchase_unit || "unit", sale_unit: product.sale_unit || "unit", batch_number: data.get("batch_number"), expiry_date: data.get("expiry_date"), quantity: qty, free_quantity: free, units_per_purchase_unit: units, stock_qty: (qty + free) * units, purchase_rate: rate, purchase_rate_per_unit: rate / units, sales_discount_percent: salesDiscount, selling_rate: Number(data.get("mrp") || 0) / units, mrp: Number(data.get("mrp") || 0), gst_percent: gst, discount, line_total: lineTotal }]);
     setProductId("");
     setProduct(null);
     setEntry({ units_per_purchase_unit: 1, mrp: 0, sales_discount_percent: "" });
@@ -61,37 +62,120 @@ export function PurchaseWorkflow({ profile, notify }: { profile: Profile; notify
     setSaving(true);
     
     try {
-      const payload = {
-        supplier_id: supplierId,
-        invoice_date: String(form.get("invoice_date")),
-        invoice_number: String(form.get("supplier_invoice_no") || ""),
-        amount_paid: Number(form.get("amount_paid") || 0),
-        items: items.map(item => ({
-          product_id: item.product_id,
-          batch_number: String(item.batch_number),
-          expiry_date: String(item.expiry_date) || null,
-          qty: item.quantity,
-          free_qty: item.free_quantity,
-          mrp: item.mrp,
-          purchase_rate: item.purchase_rate,
-          selling_rate: item.selling_rate || 0,
-          sales_discount_percent: item.sales_discount_percent,
-          gst_percent: item.gst_percent,
-        }))
-      };
-
-      const res = await fetch("/api/v2/purchases", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+      const amountPaid = Number(form.get("amount_paid") || 0);
+      const invoiceDate = String(form.get("invoice_date"));
+      const supplierInvoiceNo = String(form.get("supplier_invoice_no") || "");
+      let subtotal = 0;
+      let taxAmount = 0;
+      items.forEach(item => {
+        const lineTotal = Number(item.line_total || item.quantity * item.purchase_rate);
+        const gst = Number(item.gst_percent || 0);
+        const lineSubtotal = lineTotal / (1 + gst / 100);
+        subtotal += lineSubtotal;
+        taxAmount += (lineTotal - lineSubtotal);
       });
-      
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || "Purchase save failed");
+      const grandTotal = Math.round(subtotal + taxAmount);
+      const purchaseNo = `VP-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
+
+      const { data: purchase, error: purchaseError } = await supabase!.from("purchases").insert({
+        organization_id: profile.organization_id,
+        purchase_no: purchaseNo,
+        supplier_id: supplierId,
+        supplier_invoice_no: supplierInvoiceNo || purchaseNo,
+        invoice_date: invoiceDate,
+        subtotal,
+        tax_total: taxAmount,
+        invoice_total: grandTotal,
+        amount_paid: amountPaid,
+        status: "completed",
+        created_by: profile.id,
+      }).select("id").single();
+
+      if (purchaseError || !purchase) throw purchaseError || new Error("Failed to save purchase");
+
+      let totalNegativeFilled = 0;
+      for (const item of items) {
+        const units = Number(item.units_per_purchase_unit || 1) || 1;
+        const packQty = Number(item.quantity || 0);
+        const freePackQty = Number(item.free_quantity || 0);
+        const totalStockQty = Number(item.stock_qty || (packQty + freePackQty) * units);
+        const freeStockQty = freePackQty * units;
+        const purchaseRatePerUnit = Number(item.purchase_rate_per_unit || Number(item.purchase_rate || 0) / units);
+
+        const res = await receivePurchaseStockWithNegativeOffset(supabase!, {
+          organizationId: profile.organization_id,
+          purchaseId: purchase.id,
+          purchaseNo,
+          supplierId,
+          createdBy: profile.id,
+          item: {
+            product_id: item.product_id,
+            batch_number: String(item.batch_number),
+            expiry_date: item.expiry_date ? String(item.expiry_date) : null,
+            purchase_pack_qty: packQty,
+            free_pack_qty: freePackQty,
+            units_per_purchase_unit: units,
+            total_stock_qty: totalStockQty,
+            free_stock_qty: freeStockQty,
+            purchase_rate_per_unit: purchaseRatePerUnit,
+            mrp: Number(item.mrp || 0),
+            selling_rate_per_unit: Number(item.selling_rate || 0),
+            sales_discount_percent: item.sales_discount_percent,
+            gst_percent: Number(item.gst_percent || 0),
+            discount_amount: Number(item.discount || 0),
+            line_total: Number(item.line_total || packQty * Number(item.purchase_rate || 0)),
+            purchase_unit: item.purchase_unit || "unit",
+            sale_unit: item.sale_unit || "unit",
+          },
+        });
+        totalNegativeFilled += res.negativeOffsetFilled;
+      }
+
+      await supabase!.from("supplier_ledger").insert({
+        organization_id: profile.organization_id,
+        supplier_id: supplierId,
+        occurred_on: invoiceDate,
+        particulars: `Purchase bill ${purchaseNo} (Invoice #${supplierInvoiceNo || purchaseNo})`,
+        reference_type: "purchase",
+        reference_id: purchase.id,
+        reference_number: purchaseNo,
+        debit: grandTotal,
+        credit: amountPaid,
+        created_by: profile.id,
+      });
+
+      if (amountPaid > 0) {
+        await supabase!.from("cash_ledger").insert({
+          organization_id: profile.organization_id,
+          occurred_at: `${invoiceDate}T00:00:00`,
+          entry_type: "payment",
+          category: "Purchase payment",
+          reference_type: "purchase",
+          reference_id: purchase.id,
+          amount: amountPaid,
+          payment_mode: "cash",
+          created_by: profile.id,
+        });
+      }
+
+      try {
+        await postJournal(profile, {
+          voucherType: "purchase", entryDate: invoiceDate, narration: `Purchase bill ${purchaseNo}`, referenceType: "purchase", referenceId: purchase.id, referenceNumber: purchaseNo,
+          lines: [{ ledger: "Purchase", debit: grandTotal }, { ledger: "Supplier Payable", credit: grandTotal }]
+        });
+        if (amountPaid > 0) {
+          await postJournal(profile, {
+            voucherType: "payment", entryDate: invoiceDate, narration: `Payment for Purchase ${purchaseNo}`, referenceType: "purchase", referenceId: purchase.id, referenceNumber: purchaseNo,
+            lines: [{ ledger: "Supplier Payable", debit: amountPaid }, { ledger: "Cash", credit: amountPaid }]
+          });
+        }
+      } catch (e) {
+        console.error("Journal entry failed", e);
+      }
 
       setSaving(false);
       setItems([]);
-      notify(`${result.purchase_no} saved`);
+      notify(totalNegativeFilled > 0 ? `${purchaseNo} saved (${totalNegativeFilled} negative stock units auto-filled)` : `${purchaseNo} saved`);
       event.currentTarget.reset();
     } catch (e: any) {
       setSaving(false);

@@ -1,8 +1,9 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { Search } from "lucide-react";
+import { CheckCircle2, LoaderCircle, Plus, Search, X } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
+import { nextCode } from "../lib/format";
 import { Row } from "../lib/types";
 
 export function Field({ name, label, type = "text", required, textarea, defaultValue, value, onChange, readOnly }: { name: string; label: string; type?: string; required?: boolean; textarea?: boolean; defaultValue?: string | number | null; value?: string | number; onChange?: (event: any) => void; readOnly?: boolean }) {
@@ -15,7 +16,7 @@ export function FormPanel({ title, subtitle, children, onSubmit }: { title: stri
 
 import { usePowerSync } from "@powersync/react";
 
-export function AsyncSelect({ table, select, searchColumns, label, value, onChange, render, placeholder = "Search", orderBy = "name" }: { table: string; select: string; searchColumns: string[]; label: string; value: string; onChange: (id: string, row?: Row) => void; render: (row: Row) => string; placeholder?: string; orderBy?: string }) {
+export function AsyncSelect({ table, select, searchColumns, label, value, onChange, render, placeholder = "Search", orderBy = "name", displayValue }: { table: string; select: string; searchColumns: string[]; label: string; value: string; onChange: (id: string, row?: Row) => void; render: (row: Row) => string; placeholder?: string; orderBy?: string; displayValue?: string }) {
   const powerSync = usePowerSync();
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
@@ -23,7 +24,8 @@ export function AsyncSelect({ table, select, searchColumns, label, value, onChan
 
   useEffect(() => {
     if (!value) setQuery("");
-  }, [value]);
+    else if (displayValue) setQuery(displayValue);
+  }, [value, displayValue]);
 
   useEffect(() => {
     let alive = true;
@@ -120,5 +122,136 @@ export function AsyncSelect({ table, select, searchColumns, label, value, onChan
         </div>
       )}
     </label>
+  );
+}
+
+export function QuickPatientModal({
+  organizationId,
+  profile,
+  onCreated,
+  notify,
+}: {
+  organizationId?: string;
+  profile?: { id?: string; organization_id: string };
+  onCreated: (patient: Row) => void;
+  notify: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [name, setName] = useState("");
+  const [age, setAge] = useState("");
+  const [gender, setGender] = useState("Male");
+  const [mobile, setMobile] = useState("");
+
+  const orgId = organizationId || profile?.organization_id || "";
+
+  const handleSave = async () => {
+    if (!supabase || !name.trim()) {
+      notify("Enter patient name");
+      return;
+    }
+    setSaving(true);
+    try {
+      const patientCode = nextCode("PAT");
+      const { data: created, error } = await supabase
+        .from("patients")
+        .insert({
+          organization_id: orgId,
+          patient_id: patientCode,
+          name: name.trim(),
+          age: age ? Number(age) : null,
+          gender: gender || null,
+          mobile: mobile.trim() || null,
+        })
+        .select("id,patient_id,name,age,gender,mobile")
+        .single();
+
+      if (error || !created) throw error || new Error("Failed to create patient");
+
+      notify(`Patient ${created.name} (${created.patient_id}) created`);
+      onCreated(created);
+      setOpen(false);
+      setName("");
+      setAge("");
+      setMobile("");
+    } catch (err: any) {
+      notify(err.message || "Could not create patient");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        className="secondary"
+        onClick={() => setOpen(true)}
+        style={{ minHeight: "38px", whiteSpace: "nowrap" }}
+      >
+        <Plus size={15} /> New Patient
+      </button>
+      {open && (
+        <div className="modal-wrap print-hide">
+          <div className="modal" style={{ maxWidth: "460px" }}>
+            <div className="modal-head">
+              <div>
+                <h2>Quick Add Patient</h2>
+                <p>Register a new patient without leaving this screen.</p>
+              </div>
+              <button type="button" className="icon-btn" onClick={() => setOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="form-grid" style={{ marginTop: "14px" }}>
+              <label className="field">
+                <span>Patient name <b>*</b></span>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.currentTarget.value)}
+                  placeholder="Full name"
+                  autoFocus
+                />
+              </label>
+              <label className="field">
+                <span>Age</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="120"
+                  value={age}
+                  onChange={(e) => setAge(e.currentTarget.value)}
+                  placeholder="Years"
+                />
+              </label>
+              <label className="field">
+                <span>Gender</span>
+                <select value={gender} onChange={(e) => setGender(e.currentTarget.value)}>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Mobile number</span>
+                <input
+                  value={mobile}
+                  onChange={(e) => setMobile(e.currentTarget.value)}
+                  placeholder="10-digit mobile"
+                />
+              </label>
+            </div>
+            <div className="form-actions" style={{ marginTop: "18px" }}>
+              <button type="button" className="secondary" onClick={() => setOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="primary" onClick={handleSave} disabled={saving}>
+                {saving ? <LoaderCircle size={15} className="spin" /> : <CheckCircle2 size={15} />} Save &amp; Select
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
+import { receivePurchaseStockWithNegativeOffset } from "../../../../lib/inventory-stock";
 
 const PurchaseItemSchema = z.object({
   product_id: z.string().uuid(),
@@ -14,6 +15,9 @@ const PurchaseItemSchema = z.object({
   selling_rate: z.number().min(0),
   sales_discount_percent: z.number().nullable().optional(),
   gst_percent: z.number().min(0).optional(),
+  purchase_unit: z.string().optional(),
+  sale_unit: z.string().optional(),
+  units_per_purchase_unit: z.number().min(1).optional(),
 });
 
 const PurchaseSchema = z.object({
@@ -72,8 +76,6 @@ export async function POST(request: NextRequest) {
     });
 
     const grandTotal = Math.round(subtotal + taxAmount);
-    const amountDue = grandTotal - amount_paid;
-    const paymentStatus = amountDue <= 0 ? "paid" : amount_paid > 0 ? "partial" : "unpaid";
 
     const purchaseNo = `VP-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
     
@@ -85,67 +87,57 @@ export async function POST(request: NextRequest) {
       purchase_no: purchaseNo,
       supplier_id,
       invoice_date,
-      invoice_number,
+      supplier_invoice_no: invoice_number || purchaseNo,
       subtotal,
-      tax_amount: taxAmount,
-      grand_total: grandTotal,
-      amount_paid,
-      amount_due: amountDue,
-      payment_status: paymentStatus,
-      status: "completed",
+      tax_total: taxAmount,
+      invoice_total: grandTotal,
+      paid_amount: amount_paid,
+      status: "approved",
       created_by: profile.id,
     }).select("id").single();
 
     if (purchaseError || !purchase) throw purchaseError;
 
-    // 2. Insert items and create batches
+    // 2. Insert items and reconcile negative stock batches first
+    let totalNegativeOffset = 0;
     for (const item of items) {
-      const totalQty = item.qty + (item.free_qty || 0);
-      
-      // Create medicine batch
-      const { data: batch } = await adminClient.from("medicine_batches").insert({
-        organization_id: profile.organization_id,
-        product_id: item.product_id,
-        batch_number: item.batch_number,
-        expiry_date: item.expiry_date || null,
-        mrp: item.mrp,
-        purchase_rate: item.purchase_rate,
-        selling_rate: item.selling_rate,
-        sales_discount_percent: item.sales_discount_percent,
-        initial_stock: totalQty,
-        current_stock: totalQty,
-        supplier_id,
-        created_by: profile.id,
-      }).select("id").single();
+      const unitsPerPurchaseUnit = Number(item.units_per_purchase_unit || 1) || 1;
+      const purchasePackQty = Number(item.qty || 0);
+      const freePackQty = Number(item.free_qty || 0);
+      const totalStockQty = (purchasePackQty + freePackQty) * unitsPerPurchaseUnit;
+      const freeStockQty = freePackQty * unitsPerPurchaseUnit;
+      const purchaseRatePerUnit = Number(item.purchase_rate || 0) / unitsPerPurchaseUnit;
+      const sellingRatePerUnit =
+        (Number(item.selling_rate) > 0 ? Number(item.selling_rate) : Number(item.mrp || 0)) / unitsPerPurchaseUnit;
+      const expiryDate = item.expiry_date || `${new Date().getFullYear() + 2}-12-31`;
 
-      if (batch) {
-        await adminClient.from("purchase_items").insert({
-          organization_id: profile.organization_id,
-          purchase_id: purchase.id,
+      const { offsetTotal } = await receivePurchaseStockWithNegativeOffset(adminClient, {
+        organizationId: profile.organization_id,
+        purchaseId: purchase.id,
+        purchaseNo,
+        supplierId: supplier_id,
+        createdBy: profile.id,
+        item: {
           product_id: item.product_id,
-          batch_id: batch.id,
-          quantity: item.qty,
-          free_quantity: item.free_qty || 0,
-          purchase_rate: item.purchase_rate,
+          batch_number: item.batch_number,
+          expiry_date: expiryDate,
+          purchase_pack_qty: purchasePackQty,
+          free_pack_qty: freePackQty,
+          units_per_purchase_unit: unitsPerPurchaseUnit,
+          total_stock_qty: totalStockQty,
+          free_stock_qty: freeStockQty,
+          purchase_rate_per_unit: purchaseRatePerUnit,
           mrp: item.mrp,
-          selling_rate: item.selling_rate,
+          selling_rate_per_unit: sellingRatePerUnit,
+          sales_discount_percent: item.sales_discount_percent ?? null,
           gst_percent: item.gst_percent || 0,
+          discount_amount: 0,
           line_total: item.qty * item.purchase_rate,
-        });
-
-        await adminClient.from("stock_movements").insert({
-          organization_id: profile.organization_id,
-          product_id: item.product_id,
-          batch_id: batch.id,
-          movement_type: "purchase",
-          reference_type: "purchase",
-          reference_id: purchase.id,
-          reference_number: purchaseNo,
-          in_quantity: totalQty,
-          balance_quantity: totalQty,
-          created_by: profile.id,
-        });
-      }
+          purchase_unit: item.purchase_unit || "unit",
+          sale_unit: item.sale_unit || "unit",
+        },
+      });
+      totalNegativeOffset += offsetTotal;
     }
 
     // 3. Post Journal (Optional / Best Effort)
@@ -164,8 +156,8 @@ export async function POST(request: NextRequest) {
 
       if (journalData) {
         await adminClient.from("journal_lines").insert([
-          { organization_id: profile.organization_id, journal_entry_id: journalData.id, ledger_name: "Purchases", debit: grandTotal, credit: 0, line_order: 1 },
-          { organization_id: profile.organization_id, journal_entry_id: journalData.id, ledger_name: "Accounts Payable", debit: 0, credit: grandTotal, line_order: 2 }
+          { organization_id: profile.organization_id, journal_entry_id: journalData.id, ledger_name: "Purchase", debit: grandTotal, credit: 0, line_order: 1 },
+          { organization_id: profile.organization_id, journal_entry_id: journalData.id, ledger_name: "Supplier Payable", debit: 0, credit: grandTotal, line_order: 2 }
         ]);
         
         if (amount_paid > 0) {
@@ -183,7 +175,7 @@ export async function POST(request: NextRequest) {
 
           if (paymentJournal) {
             await adminClient.from("journal_lines").insert([
-              { organization_id: profile.organization_id, journal_entry_id: paymentJournal.id, ledger_name: "Accounts Payable", debit: amount_paid, credit: 0, line_order: 1 },
+              { organization_id: profile.organization_id, journal_entry_id: paymentJournal.id, ledger_name: "Supplier Payable", debit: amount_paid, credit: 0, line_order: 1 },
               { organization_id: profile.organization_id, journal_entry_id: paymentJournal.id, ledger_name: "Cash", debit: 0, credit: amount_paid, line_order: 2 }
             ]);
           }

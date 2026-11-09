@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import useSWR from "swr";
 import { supabase } from "../../../lib/supabase";
+import { normalizeBatchRow } from "../../../lib/inventory-stock";
 import { ModuleConfig, Row } from "./types";
 import { businessDate } from "../../../lib/reporting.mjs";
 import { readAll } from "../../../lib/read-all";
@@ -116,7 +117,10 @@ export function usePagedQuery({ module, page, pageSize, search, filters, organiz
       const { data: resultData, count: total, error: queryError } = await query;
       if (queryError) throw queryError;
 
-      return { rows: (resultData || []) as Row[], count: total || 0 };
+      const rawRows = (resultData || []) as Row[];
+      const rows = module.table === "medicine_batches" ? rawRows.map((r) => normalizeBatchRow(r)) : rawRows;
+
+      return { rows, count: total || 0 };
     },
     { 
       keepPreviousData: true,

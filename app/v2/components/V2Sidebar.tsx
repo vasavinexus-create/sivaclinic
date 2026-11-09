@@ -25,6 +25,7 @@ const icons: Record<string, any> = {
   "medicine-sales": Pill,
   medicine: Pill,
   inventory: Boxes,
+  "stock-reset": Boxes,
   "low-stock": AlertTriangle,
   "rate-edit-verification": ShieldCheck,
   "inpatient-billing": ShoppingCart,
