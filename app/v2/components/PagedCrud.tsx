@@ -1,14 +1,16 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, LoaderCircle, Pencil, Plus, RefreshCw, Search, X } from "lucide-react";
+import { CheckCircle2, FileSpreadsheet, LoaderCircle, Pencil, Plus, RefreshCw, Search, X } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
-import { getEffectiveStock } from "../../../lib/inventory-stock";
+import { getEffectiveStock, insertStockMovementSafe } from "../../../lib/inventory-stock";
 import { fmtDate, money, nextCode } from "../lib/format";
 import { pageSizeOptions } from "../lib/modules";
 import { usePagedQuery } from "../lib/usePagedQuery";
 import { FieldConfig, ModuleConfig, Profile, Row } from "../lib/types";
 import { Capacitor } from "@capacitor/core";
+import { fetchMedicineCategories, saveNewMedicineCategory } from "../lib/categories";
+import MedicineImportModal from "./MedicineImportModal";
 
 function isMoneyColumn(key: string) {
   return key.includes("fee") || key.includes("rate") || key.includes("amount") || key.includes("balance") || key === "mrp";
@@ -75,6 +77,41 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
   const [activeRowIndex, setActiveRowIndex] = useState(-1);
   const editable = module.editable !== false && module.fields.length > 0;
   const state = usePagedQuery({ module, page, pageSize, search, filters, organizationId: profile.organization_id });
+
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState("");
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [newCategoryInput, setNewCategoryInput] = useState("");
+  const [showImportModal, setShowImportModal] = useState(false);
+
+  useEffect(() => {
+    if ((module.key === "medicine" || module.table === "products") && profile.organization_id) {
+      fetchMedicineCategories(profile.organization_id).then((cats) => {
+        setCategoryOptions(cats);
+      });
+    }
+  }, [module.key, module.table, profile.organization_id]);
+
+  useEffect(() => {
+    if (open) {
+      if (editing) {
+        const cat = editing.category ? String(editing.category).trim() : "";
+        setSelectedCategory(cat);
+        if (cat) {
+          setCategoryOptions((prev) => {
+            if (!prev.some((c) => c.toLowerCase() === cat.toLowerCase())) {
+              return [...prev, cat].sort((a, b) => a.localeCompare(b));
+            }
+            return prev;
+          });
+        }
+      } else {
+        setSelectedCategory("");
+      }
+      setIsAddingCategory(false);
+      setNewCategoryInput("");
+    }
+  }, [open, editing]);
 
   useEffect(() => {
     if (module.key === 'low-stock') {
@@ -180,6 +217,33 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
   const close = () => {
     setOpen(false);
     setEditing(null);
+    setIsAddingCategory(false);
+    setNewCategoryInput("");
+    setSelectedCategory("");
+  };
+
+  const handleAddNewCategory = async () => {
+    const trimmed = newCategoryInput.trim();
+    if (!trimmed) {
+      notify("Please enter a category name");
+      return;
+    }
+    const existing = categoryOptions.find((c) => c.toLowerCase() === trimmed.toLowerCase());
+    if (existing) {
+      setSelectedCategory(existing);
+      setIsAddingCategory(false);
+      setNewCategoryInput("");
+      notify(`Category "${existing}" selected`);
+      return;
+    }
+
+    const saved = await saveNewMedicineCategory(profile.organization_id, trimmed);
+    const updated = [...categoryOptions, saved].sort((a, b) => a.localeCompare(b));
+    setCategoryOptions(updated);
+    setSelectedCategory(saved);
+    setIsAddingCategory(false);
+    setNewCategoryInput("");
+    notify(`Category "${saved}" added and selected`);
   };
 
   const save = async (event: FormEvent<HTMLFormElement>) => {
@@ -195,6 +259,39 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
       const idField = module.fields.find((field) => field.key.endsWith("_id"))?.key;
       if (idField) payload[idField] = nextCode(module.idPrefix);
     }
+
+    let initialStock = 0;
+    let stockUnitType = "Sale unit (Tablets / Pieces)";
+    let batchNumber = "";
+    let expiryDate = "";
+    let discountPercent = 0;
+
+    if (module.key === "medicine" || module.table === "products") {
+      let finalCat = selectedCategory;
+      if (isAddingCategory && newCategoryInput.trim()) {
+        const added = await saveNewMedicineCategory(profile.organization_id, newCategoryInput.trim());
+        if (added) finalCat = added;
+      }
+      payload.category = finalCat || null;
+
+      initialStock = Number(payload.initial_stock || 0);
+      stockUnitType = String(payload.initial_stock_unit || "Sale unit (Tablets / Pieces)");
+      batchNumber = String(payload.batch_number || "").trim();
+      expiryDate = String(payload.expiry_date || "").trim();
+      discountPercent = Number(payload.sales_discount_percent || 0);
+
+      delete payload.initial_stock;
+      delete payload.initial_stock_unit;
+      delete payload.batch_number;
+      delete payload.expiry_date;
+      delete payload.sales_discount_percent;
+
+      const unitsPerPack = Math.max(1, Number(payload.default_units_per_purchase_unit || 1));
+      const mrpVal = Number(payload.mrp || 0);
+      if (!payload.selling_rate || Number(payload.selling_rate) <= 0) {
+        payload.selling_rate = Number(((mrpVal / unitsPerPack) * (1 - discountPercent / 100)).toFixed(2));
+      }
+    }
     
     try {
       const safePayload = { ...payload, organization_id: profile.organization_id };
@@ -202,12 +299,58 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
       if (editing) {
         res = await supabase!.from(module.table).update(safePayload).eq("id", editing.id).eq("organization_id", profile.organization_id).select("id").single();
       } else {
-        res = await supabase!.from(module.table).insert(safePayload).select("id").single();
+        res = await supabase!.from(module.table).insert(safePayload).select("id, product_id, name").single();
       }
 
       if (res.error) throw new Error(res.error.message || "Save failed");
 
-      notify(`${module.title} ${editing ? "updated" : "saved"}`);
+      if (!editing && (module.key === "medicine" || module.table === "products") && (initialStock > 0 || batchNumber) && res.data?.id) {
+        const batchNum = batchNumber || "OPENING";
+        const expDate = expiryDate || new Date(Date.now() + 730 * 86400000).toISOString().slice(0, 10);
+        const unitsPerPack = Math.max(1, Number(payload.default_units_per_purchase_unit || 1));
+        
+        const isPurchaseUnit = stockUnitType.toLowerCase().includes("purchase") || stockUnitType.toLowerCase().includes("strip");
+        const retailStock = isPurchaseUnit ? Math.round(initialStock * unitsPerPack) : initialStock;
+        const packQty = isPurchaseUnit ? initialStock : Math.floor(initialStock / unitsPerPack);
+        
+        const mrpVal = Number(payload.mrp || 0);
+        const sellRate = Number(payload.selling_rate || ((mrpVal / unitsPerPack) * (1 - discountPercent / 100)).toFixed(2));
+
+        const { data: createdBatch } = await supabase!.from("medicine_batches").insert({
+          organization_id: profile.organization_id,
+          product_id: res.data.id,
+          batch_number: batchNum,
+          expiry_date: expDate,
+          quantity_received: retailStock,
+          current_stock: retailStock,
+          stock_unit_qty: retailStock,
+          purchase_rate: Number((mrpVal * 0.7).toFixed(2)),
+          mrp: mrpVal,
+          selling_rate: sellRate,
+          gst_percent: Number(payload.gst_percent || 0),
+          sales_discount_percent: discountPercent,
+          purchase_unit: payload.purchase_unit || "strip",
+          sale_unit: payload.sale_unit || "tablet",
+          units_per_purchase_unit: unitsPerPack,
+          purchase_pack_qty: packQty,
+        }).select("id").single();
+
+        if (createdBatch) {
+          await insertStockMovementSafe(supabase!, {
+            organization_id: profile.organization_id,
+            product_id: res.data.id,
+            batch_id: createdBatch.id,
+            movement_type: "initial",
+            reference_type: "opening_stock",
+            reference_number: batchNum,
+            in_quantity: retailStock,
+            balance_quantity: retailStock,
+            created_by: profile.id,
+          });
+        }
+      }
+
+      notify(`${module.title} ${editing ? "updated" : "saved"}${!editing && initialStock > 0 ? ` with opening stock (${initialStock} ${payload.purchase_unit || "packs"} / ${payload.sale_unit || "units"})` : ""}`);
       close();
       state.reload();
     } catch (e: any) {
@@ -220,7 +363,19 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
   return <div className={`paged-crud page-${module.key}`}>
     <div className={`page-head ${isPrintingCustom ? "print-hide" : ""}`}>
       <div><h1>{module.title}</h1><p>{module.subtitle}</p></div>
-      {editable && <button className="primary" onClick={() => { setEditing(null); setOpen(true); }}><Plus size={17}/> Add {module.title}</button>}
+      <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+        {module.key === "medicine" && (
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setShowImportModal(true)}
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+          >
+            <FileSpreadsheet size={16} /> Import Excel / CSV
+          </button>
+        )}
+        {editable && <button className="primary" onClick={() => { setEditing(null); setOpen(true); }}><Plus size={17}/> Add {module.title}</button>}
+      </div>
     </div>
     <div className={`panel ${isPrintingCustom ? "print-hide" : ""}`}>
       <div className="v2-toolbar">
@@ -286,6 +441,131 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
     {editable && open && <div className="modal-wrap"><div className="modal"><div className="modal-head"><div><h2>{editing ? "Edit" : "Add"} {module.title}</h2><p>{editing ? "Update only this record" : "New record uses generated code where required"}</p></div><button className="icon-btn" onClick={close}><X size={18}/></button></div><form onSubmit={save}><div className="form-grid">{module.fields.map((field) => {
       const value = editing?.[field.key] ?? field.defaultValue ?? "";
       if (field.readonlyOnCreate && !editing) return <label className="field" key={field.key}><span>{field.label}</span><input value="Auto generated" readOnly/></label>;
+
+      if ((module.key === "medicine" || module.table === "products") && field.key === "category") {
+        return (
+          <div className="field category-field" key={field.key}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <span>{field.label}{field.required && <b> *</b>}</span>
+              {!isAddingCategory ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingCategory(true);
+                    setNewCategoryInput("");
+                  }}
+                  style={{
+                    background: "#e6f4f1",
+                    color: "#0c5749",
+                    border: "1px solid #b2ded6",
+                    borderRadius: "7px",
+                    padding: "5px 12px",
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                  }}
+                  title="Add new category"
+                >
+                  <Plus size={15} /> Add Category
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingCategory(false);
+                    setNewCategoryInput("");
+                  }}
+                  style={{
+                    background: "transparent",
+                    color: "#68736f",
+                    border: "none",
+                    fontSize: "13px",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                  }}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+
+            {isAddingCategory ? (
+              <div style={{ display: "flex", gap: "8px", alignItems: "stretch", width: "100%" }}>
+                <input
+                  type="text"
+                  placeholder="Type new category (e.g. Antibiotic, Drops)"
+                  value={newCategoryInput}
+                  onChange={(e) => setNewCategoryInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleAddNewCategory();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      setIsAddingCategory(false);
+                    }
+                  }}
+                  autoFocus
+                  style={{ flex: 1, minWidth: 0 }}
+                />
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={handleAddNewCategory}
+                  style={{ padding: "0 18px", fontSize: "15px", whiteSpace: "nowrap" }}
+                >
+                  Add
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    setIsAddingCategory(false);
+                    setNewCategoryInput("");
+                  }}
+                  style={{ padding: "0 14px", fontSize: "15px" }}
+                >
+                  Cancel
+                </button>
+                {/* Hidden field so formData captures category even if typing */}
+                <input type="hidden" name={field.key} value={selectedCategory} />
+              </div>
+            ) : (
+              <select
+                name={field.key}
+                value={selectedCategory}
+                onChange={(e) => {
+                  if (e.target.value === "__ADD_NEW__") {
+                    setIsAddingCategory(true);
+                    setNewCategoryInput("");
+                  } else {
+                    setSelectedCategory(e.target.value);
+                  }
+                }}
+                required={field.required}
+                style={{ width: "100%" }}
+              >
+                <option value="">Select Category</option>
+                <option value="__ADD_NEW__" style={{ fontWeight: 700, color: "#0c5749", backgroundColor: "#e6f4f1" }}>
+                  + Add New Category...
+                </option>
+                {selectedCategory && !categoryOptions.some((c) => c.toLowerCase() === selectedCategory.toLowerCase()) && (
+                  <option value={selectedCategory}>{selectedCategory}</option>
+                )}
+                {categoryOptions.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        );
+      }
+
       if (field.type === "select") return <label className="field" key={field.key}><span>{field.label}{field.required && <b> *</b>}</span><select name={field.key} required={field.required} defaultValue={value}>{!field.required && <option value="">Select {field.label}</option>}{field.options?.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>;
       return <label className="field" key={field.key}><span>{field.label}{field.required && <b> *</b>}</span><input name={field.key} type={field.type || "text"} required={field.required} defaultValue={value} step={field.type === "number" ? "0.01" : undefined}/></label>;
     })}</div><div className="form-actions"><button type="button" className="secondary" onClick={close}>Cancel</button><button className="primary" disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} {editing ? "Update" : "Save"}</button></div></form></div></div>}
@@ -497,6 +777,22 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
           </div>
         );
       })()}
+
+    {showImportModal && (
+      <MedicineImportModal
+        profile={profile}
+        existingProducts={state.rows}
+        knownCategories={categoryOptions}
+        onClose={() => setShowImportModal(false)}
+        onSuccess={() => {
+          state.reload();
+          if (profile.organization_id) {
+            fetchMedicineCategories(profile.organization_id).then(setCategoryOptions);
+          }
+        }}
+        notify={notify}
+      />
+    )}
 
     </div>
 ;
