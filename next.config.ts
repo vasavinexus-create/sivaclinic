@@ -1,3 +1,4 @@
+import path from "path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
@@ -7,7 +8,7 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
   turbopack: {
-    root: "d:/git/CASH LEDGER/single app/sivaclinic - Copy",
+    root: path.resolve(process.cwd()),
   },
 };
 
