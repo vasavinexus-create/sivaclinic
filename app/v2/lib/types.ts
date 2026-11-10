@@ -12,8 +12,10 @@ export type Profile = {
 
 export type Organization = {
   id: string;
+  name?: string | null;
   clinic_name: string | null;
   pharmacy_name: string | null;
+  active?: boolean | null;
   phone?: string | null;
   address?: string | null;
   gst_number?: string | null;
@@ -23,7 +25,46 @@ export type Organization = {
   gemini_api_key?: string | null;
   groq_api_key?: string | null;
   gemini_model?: string | null;
+  print_prescription?: boolean | null;
+  print_bill?: boolean | null;
 };
+
+export interface BillingPrintConfig {
+  print_prescription: boolean;
+  print_bill: boolean;
+}
+
+export function getBillingPrintConfig(organizationId?: string | null, org?: Organization | null): BillingPrintConfig {
+  let stored: Partial<BillingPrintConfig> | null = null;
+  if (typeof window !== "undefined" && organizationId) {
+    try {
+      const raw = window.localStorage.getItem(`mediflow_billing_print_config_${organizationId}`);
+      if (raw) stored = JSON.parse(raw);
+    } catch {}
+  }
+  return {
+    print_prescription:
+      typeof stored?.print_prescription === "boolean"
+        ? stored.print_prescription
+        : typeof org?.print_prescription === "boolean"
+        ? org.print_prescription
+        : true,
+    print_bill:
+      typeof stored?.print_bill === "boolean"
+        ? stored.print_bill
+        : typeof org?.print_bill === "boolean"
+        ? org.print_bill
+        : true,
+  };
+}
+
+export function saveBillingPrintConfig(organizationId: string, config: BillingPrintConfig) {
+  if (typeof window !== "undefined" && organizationId) {
+    try {
+      window.localStorage.setItem(`mediflow_billing_print_config_${organizationId}`, JSON.stringify(config));
+    } catch {}
+  }
+}
 
 // ─── Clinical ─────────────────────────────────────────────────────────────
 export interface Patient {

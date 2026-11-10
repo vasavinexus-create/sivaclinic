@@ -4,12 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import { App } from "@capacitor/app";
 import { CheckCircle2, Database, Users, CircleDollarSign, PackagePlus, Boxes, CreditCard } from "lucide-react";
 import { supabase } from "../../lib/supabase";
-import { rolePages } from "../../lib/page-permissions";
+import { rolePages, allPageLabels } from "../../lib/page-permissions";
 import { SettingsWorkflow } from "./components/AdminWorkflows";
 import { ExpenseWorkflow, LedgerCreationWorkflow, LedgerGroupWorkflow } from "./components/AccountReports";
 import { DeletedBillsAuditWorkflow } from "./components/AuditWorkflows";
-import { ConsultationWorkflow, FollowUpWorkflow, PatientHistoryWorkflow } from "./components/ClinicalWorkflows";
+import { ConsultationWorkflow, FollowUpWorkflow, PatientHistoryWorkflow, PreExaminationWorkflow } from "./components/ClinicalWorkflows";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { handleFormEnterKey } from "./components/controls";
 import PagedCrud from "./components/PagedCrud";
 import { InpatientPaymentWorkflow, SupplierPaymentWorkflow } from "./components/PaymentWorkflows";
 import { BillingWorkflow, InpatientBillingWorkflow } from "./components/PharmacyWorkflows";
@@ -32,6 +33,7 @@ import FinancialReports from "../components/FinancialReports";
 import { ClinicManagementWorkflow } from "./components/V1ClinicManagement";
 import { getV2Module, v2Nav } from "./lib/modules";
 import { Organization, Profile } from "./lib/types";
+import { PausedClinicPaymentScreen } from "./lib/clinic-payment";
 import { money } from "./lib/format";
 import { getEffectiveStock } from "../../lib/inventory-stock";
 import { X, CheckCircle2 as CheckIcon } from "lucide-react";
@@ -46,29 +48,119 @@ function SignInNotice() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pausedOrgFallback, setPausedOrgFallback] = useState<any>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!supabase) return;
     setLoading(true);
     setError('');
+    setPausedOrgFallback(null);
     
-    let loginEmail = email.trim();
-    if (!loginEmail.includes("@")) {
-      const { data, error: rpcErr } = await supabase!.rpc("login_email_for_username", { p_username: loginEmail });
-      if (rpcErr || !data) {
-        setError("Invalid username");
+    const rawInput = email.trim();
+    let loginEmail = rawInput;
+    if (!rawInput.includes("@")) {
+      const clean = rawInput.toLowerCase().replace(/[^a-z0-9_.-]+/g, "");
+      if (!clean || !password) {
+        setError("Enter username and password");
         setLoading(false);
         return;
       }
-      loginEmail = String(data);
+      if (clean === "vasavinexus") {
+        loginEmail = "vasavinexus@gmail.com";
+      } else {
+        const { data, error: rpcErr } = await supabase.rpc("prepare_username_login", {
+          p_username: clean,
+          p_password: password,
+        });
+        if (rpcErr || !data) {
+          const rawMsg = rpcErr?.message || "";
+          if (rawMsg.includes("CLINIC_PAUSED:")) {
+            const jsonPart = rawMsg.split("CLINIC_PAUSED:")[1]?.trim();
+            try {
+              const orgObj = JSON.parse(jsonPart);
+              if (typeof window !== "undefined") {
+                try {
+                  window.localStorage.setItem(`mediflow_paused_user_org_${clean}`, JSON.stringify(orgObj));
+                } catch {}
+              }
+              setPausedOrgFallback(orgObj);
+              setLoading(false);
+              return;
+            } catch {}
+          }
+          if (typeof window !== "undefined") {
+            try {
+              const cachedOrgRaw = window.localStorage.getItem(`mediflow_paused_user_org_${clean}`);
+              if (cachedOrgRaw) {
+                const cachedOrg = JSON.parse(cachedOrgRaw);
+                if (cachedOrg && cachedOrg.active === false) {
+                  setPausedOrgFallback(cachedOrg);
+                  setLoading(false);
+                  return;
+                }
+              }
+            } catch {}
+          }
+          const msg = rawMsg || "Invalid username or password";
+          setError(msg);
+          setLoading(false);
+          return;
+        }
+        loginEmail = String(data);
+      }
     }
     
-    const { error: err } = await supabase!.auth.signInWithPassword({ email: loginEmail, password });
+    const { error: err } = await supabase.auth.signInWithPassword({ email: loginEmail, password });
     if (err) {
       setError(err.message);
       setLoading(false);
+      return;
     }
+    await supabase.rpc("ensure_current_user_profile");
+    const { data: userRes } = await supabase.auth.getUser();
+    if (userRes?.user) {
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("id,organization_id,role,active")
+        .eq("id", userRes.user.id)
+        .maybeSingle();
+      if (prof && prof.role !== "software_owner") {
+        const { data: orgData } = await supabase
+          .from("organizations")
+          .select("*")
+          .eq("id", prof.organization_id)
+          .maybeSingle();
+        if (!prof.active || orgData?.active === false) {
+          setPausedOrgFallback(orgData || { clinic_name: "Clinic", active: false });
+          setLoading(false);
+          return;
+        }
+      }
+    }
+    setLoading(false);
   };
+
+  if (pausedOrgFallback) {
+    return (
+      <PausedClinicPaymentScreen
+        organization={pausedOrgFallback}
+        onRefreshStatus={async () => {
+          if (!supabase) return;
+          if (pausedOrgFallback?.id) {
+            const { data: nextOrg } = await supabase.from("organizations").select("*").eq("id", pausedOrgFallback.id).maybeSingle();
+            if (nextOrg && nextOrg.active !== false) {
+              setPausedOrgFallback(null);
+            }
+          }
+        }}
+        onSignOut={async () => {
+          if (supabase) await supabase.auth.signOut();
+          setPausedOrgFallback(null);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="auth-page" style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f0f4f2' }}>
@@ -163,6 +255,7 @@ type PageProps = {
 // ─── PAGE REGISTRY — industry-standard route map (replaces nested ternary) ──
 const PAGE_REGISTRY: Record<string, any> = {
   
+  "pre-examination":        PreExaminationWorkflow,
   "consultation":           ConsultationWorkflow,
   "patient-history":        PatientHistoryWorkflow,
   "follow-up-alerts":       FollowUpWorkflow,
@@ -213,14 +306,26 @@ export default function V2App({ pageKey = "dashboard" }: { pageKey?: string }) {
       });
     } catch (e) {}
   }, []);
-const [session, setSession] = useState<any>(undefined);
+  const [session, setSession] = useState<any>(undefined);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
+  const [orgLoaded, setOrgLoaded] = useState(false);
   const [allowedPages, setAllowedPages] = useState<string[] | null>(null);
   const [accessError, setAccessError] = useState("");
   const [sideOpen, setSideOpen] = useState(false);
   const [notice, setNotice] = useState("");
-  const active = pageKey;
+  // Effective active page routing:
+  // If software_owner, always "clinic-management".
+  // If landing on "dashboard" but "Dashboard" is not allowed for this user,
+  // automatically route to their first allowed page.
+  const active = useMemo(() => {
+    if (profile?.role === "software_owner") return "clinic-management";
+    if (pageKey === "dashboard" && allowedPages && allowedPages.length > 0 && !allowedPages.includes("Dashboard")) {
+      const firstAllowed = v2Nav.find(item => item.label && allowedPages.includes(item.label));
+      if (firstAllowed?.key) return firstAllowed.key;
+    }
+    return pageKey;
+  }, [profile?.role, allowedPages, pageKey]);
   const module = useMemo(() => getV2Module(active), [active]);
 
   // Activate global realtime cache invalidation
@@ -263,10 +368,18 @@ const [session, setSession] = useState<any>(undefined);
 
   // Organization
   useEffect(() => {
-    if (!profile || !supabase) { setOrganization(null); return; }
-    supabase.from("organizations").select("id,clinic_name,pharmacy_name,sales_gst_mode,sales_discount_percent")
+    if (!profile || !supabase) {
+      setOrganization(null);
+      setOrgLoaded(false);
+      return;
+    }
+    setOrgLoaded(false);
+    supabase.from("organizations").select("*")
       .eq("id", profile.organization_id).single()
-      .then(({ data }) => setOrganization(data as Organization || null));
+      .then(({ data }) => {
+        setOrganization(data as Organization || null);
+        setOrgLoaded(true);
+      });
   }, [profile]);
 
   // Page permissions
@@ -275,16 +388,24 @@ const [session, setSession] = useState<any>(undefined);
     setAllowedPages(null);
     setAccessError("");
     if (!profile || !supabase) return;
-    if (!profile.active) { setAccessError("This login is inactive."); return; }
-    if (["admin", "software_owner"].includes(profile.role)) {
-      setAllowedPages(v2Nav.flatMap(item => item.label ? [item.label] : []));
+    if (profile.role === "software_owner") {
+      setAllowedPages(["Clinic Management"]);
       return;
     }
+    // Clinic users: strictly load user-wise page permissions
     supabase.from("page_permissions").select("page_key").eq("profile_id", profile.id)
       .then(({ data, error }) => {
         if (!alive) return;
         if (error) { setAccessError(error.message); return; }
-        setAllowedPages(data?.length ? data.map(row => row.page_key) : rolePages[profile.role] || []);
+        if (data && data.length > 0) {
+          setAllowedPages(data.map(row => row.page_key).filter(p => p !== "Clinic Management"));
+        } else {
+          // Fallback if no user-wise permissions have been configured yet
+          const fallback = profile.role === "admin"
+            ? allPageLabels
+            : (rolePages[profile.role] || ["Dashboard"]);
+          setAllowedPages(fallback.filter(p => p !== "Clinic Management"));
+        }
       });
     return () => { alive = false; };
   }, [profile]);
@@ -293,11 +414,29 @@ const [session, setSession] = useState<any>(undefined);
   if (session === undefined) return <Loading />;
   if (!session) return <SignInNotice />;
   if (!profile) return <Loading />;
+  if (profile.role !== "software_owner" && !orgLoaded) return <Loading />;
+  if (profile.role !== "software_owner" && (!profile.active || organization?.active === false)) {
+    return (
+      <PausedClinicPaymentScreen
+        organization={organization}
+        onRefreshStatus={async () => {
+          if (!supabase) return;
+          const [{ data: nextProf }, { data: nextOrg }] = await Promise.all([
+            supabase.from("profiles").select("id,organization_id,full_name,role,active").eq("id", profile.id).single(),
+            supabase.from("organizations").select("*").eq("id", profile.organization_id).single(),
+          ]);
+          if (nextProf) setProfile(nextProf as Profile);
+          if (nextOrg) setOrganization(nextOrg as Organization);
+        }}
+        onSignOut={() => supabase?.auth.signOut()}
+      />
+    );
+  }
   if (accessError) return <div role="alert" className="error-box">{accessError}</div>;
   if (!allowedPages) return <Loading />;
 
-  const brandName = organization?.clinic_name || "MEDIFLOW";
-  const brandSub = organization?.pharmacy_name || "Scalable V2";
+  const brandName = profile.role === "software_owner" ? "MEDIFLOW" : (organization?.clinic_name || "MEDIFLOW");
+  const brandSub = profile.role === "software_owner" ? "Owner Console" : (organization?.pharmacy_name || "Scalable V2");
   const pageLabel = v2Nav.find(item => item.key === active)?.label || active;
   const pageProps: PageProps = { profile, organization, notify: setNotice, onOrganizationChange: setOrganization };
 
@@ -320,7 +459,7 @@ const [session, setSession] = useState<any>(undefined);
   }
 
   return (
-    <main className="app-shell v2-shell">
+    <main className="app-shell v2-shell" onKeyDown={handleFormEnterKey}>
       <V2Sidebar
         active={active}
         allowedPages={allowedPages}

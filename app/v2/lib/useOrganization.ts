@@ -2,7 +2,7 @@
 
 import useSWR from "swr";
 import { supabase } from "../../../lib/supabase";
-import { Organization, Profile } from "./types";
+import { getBillingPrintConfig, Organization, Profile } from "./types";
 
 export function useOrganization(organizationId?: string | null) {
   return useSWR(
@@ -10,11 +10,12 @@ export function useOrganization(organizationId?: string | null) {
     async () => {
       const { data, error } = await supabase!
         .from("organizations")
-        .select("id,clinic_name,pharmacy_name,sales_gst_mode,sales_discount_percent")
+        .select("*")
         .eq("id", organizationId)
         .single();
       if (error) throw error;
-      return data as Organization;
+      const printCfg = getBillingPrintConfig(organizationId, data as Organization);
+      return { ...(data as Organization), ...printCfg } as Organization;
     },
     { revalidateOnFocus: false, dedupingInterval: 60000 }
   );

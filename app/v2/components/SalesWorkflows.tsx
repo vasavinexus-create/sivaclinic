@@ -28,7 +28,7 @@ export function SalesWorkflow({ profile, organization, notify }: { profile: Prof
     setLoading(true);
     supabase
       .from("sales")
-      .select("id,invoice_no,sold_at,grand_total,medicine_subtotal,medicine_tax,special_discount_amount,pharmacy_revenue,doctor_fee,payment_mode,status,sale_type,patient_id,patient:patients(patient_id,name,mobile),sale_items(id,product_id,batch_id,quantity,returned_quantity,unit_rate,gst_percent,line_total,product:products(name),batch:medicine_batches(batch_number,current_stock,stock_unit_qty))")
+      .select("id,invoice_no,sold_at,grand_total,medicine_subtotal,medicine_tax,special_discount_amount,pharmacy_revenue,doctor_fee,payment_mode,status,sale_type,patient_id,patient:patients(patient_id,name,mobile),sale_items(id,product_id,batch_id,quantity,returned_quantity,unit_rate,original_unit_rate,mrp,mrp_unit_rate,sales_discount_percent,original_sales_discount_percent,gst_percent,line_total,product:products(name,mrp,selling_rate,default_units_per_purchase_unit),batch:medicine_batches(batch_number,current_stock,stock_unit_qty,mrp,selling_rate,sales_discount_percent))")
       .eq("organization_id", profile.organization_id)
       .eq("status", tab)
       .gte("sold_at", fromDate + "T00:00:00")
@@ -195,14 +195,58 @@ export function SalesWorkflow({ profile, organization, notify }: { profile: Prof
     }
   };
 
+  const getSaleItemPricing = (item: Row) => {
+    const rate = Number(item.unit_rate || 0);
+    const units = Number(item.product?.default_units_per_purchase_unit || 1) || 1;
+    const fallbackBatchOrProdRate =
+      Number(item.batch?.selling_rate || 0) > 0
+        ? Number(item.batch.selling_rate)
+        : Number(item.product?.selling_rate || 0) > 0
+        ? Number(item.product.selling_rate)
+        : Number(item.batch?.mrp || item.product?.mrp || 0) > 0
+        ? Number(item.batch?.mrp || item.product?.mrp || 0) / units
+        : 0;
+    const mrpUnitRate =
+      Number(item.mrp_unit_rate || 0) > 0
+        ? Number(item.mrp_unit_rate)
+        : Number(item.mrp || 0) > 0
+        ? Number(item.mrp)
+        : fallbackBatchOrProdRate > 0
+        ? Math.ceil(fallbackBatchOrProdRate)
+        : Number(item.original_unit_rate || rate || 0);
+
+    const discountPercent =
+      item.sales_discount_percent != null
+        ? Number(item.sales_discount_percent)
+        : item.original_sales_discount_percent != null
+        ? Number(item.original_sales_discount_percent)
+        : item.batch?.sales_discount_percent != null
+        ? Number(item.batch.sales_discount_percent)
+        : mrpUnitRate > rate && mrpUnitRate > 0
+        ? Number((((mrpUnitRate - rate) / mrpUnitRate) * 100).toFixed(2))
+        : Number(organization?.sales_discount_percent || 0);
+
+    return {
+      mrp_unit_rate: mrpUnitRate,
+      sales_discount_percent: discountPercent,
+      selling_rate: rate,
+    };
+  };
+
   const activePrintCart = viewSale
-    ? (viewSale.sale_items || []).map((item: Row) => ({
-        name: item.product?.name || "Medicine",
-        batch_number: item.batch?.batch_number || "-",
-        qty: Math.max(0, Number(item.quantity || 0) - Number(item.returned_quantity || 0)),
-        selling_rate: Number(item.unit_rate || 0),
-        gst_percent: Number(item.gst_percent || 0),
-      }))
+    ? (viewSale.sale_items || []).map((item: Row) => {
+        const pricing = getSaleItemPricing(item);
+        return {
+          name: item.product?.name || "Medicine",
+          batch_number: item.batch?.batch_number || "-",
+          qty: Math.max(0, Number(item.quantity || 0) - Number(item.returned_quantity || 0)),
+          mrp: pricing.mrp_unit_rate,
+          mrp_unit_rate: pricing.mrp_unit_rate,
+          sales_discount_percent: pricing.sales_discount_percent,
+          selling_rate: pricing.selling_rate,
+          gst_percent: Number(item.gst_percent || 0),
+        };
+      })
     : [];
 
   return (
@@ -273,7 +317,7 @@ export function SalesWorkflow({ profile, organization, notify }: { profile: Prof
 
         {viewSale && (
           <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(15, 23, 42, 0.55)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-            <div className="panel" style={{ width: "100%", maxWidth: "680px", background: "#fff", borderRadius: "12px", padding: "20px", maxHeight: "90vh", overflowY: "auto" }}>
+            <div className="panel" style={{ width: "100%", maxWidth: "780px", background: "#fff", borderRadius: "12px", padding: "20px", maxHeight: "90vh", overflowY: "auto" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                 <div>
                   <h3 style={{ margin: 0 }}>Invoice {viewSale.invoice_no}</h3>
@@ -286,18 +330,23 @@ export function SalesWorkflow({ profile, organization, notify }: { profile: Prof
               </div>
               <div className="data-wrap">
                 <table className="data-table">
-                  <thead><tr><th>Medicine</th><th>Batch</th><th>Sold Qty</th><th>Returned</th><th>Rate</th><th>Total</th></tr></thead>
+                  <thead><tr><th>Medicine</th><th>Batch</th><th>Sold Qty</th><th>Returned</th><th>MRP</th><th>Discount</th><th>Rate</th><th>Total</th></tr></thead>
                   <tbody>
-                    {(viewSale.sale_items || []).map((item: Row) => (
-                      <tr key={item.id}>
-                        <td>{item.product?.name || "-"}</td>
-                        <td>{item.batch?.batch_number || "-"}</td>
-                        <td>{item.quantity}</td>
-                        <td>{item.returned_quantity || 0}</td>
-                        <td>{money(item.unit_rate)}</td>
-                        <td>{money(Number(item.unit_rate || 0) * Math.max(0, Number(item.quantity || 0) - Number(item.returned_quantity || 0)))}</td>
-                      </tr>
-                    ))}
+                    {(viewSale.sale_items || []).map((item: Row) => {
+                      const pricing = getSaleItemPricing(item);
+                      return (
+                        <tr key={item.id}>
+                          <td>{item.product?.name || "-"}</td>
+                          <td>{item.batch?.batch_number || "-"}</td>
+                          <td>{item.quantity}</td>
+                          <td>{item.returned_quantity || 0}</td>
+                          <td>{money(pricing.mrp_unit_rate)}</td>
+                          <td>{Number(pricing.sales_discount_percent || 0)}%</td>
+                          <td>{money(pricing.selling_rate)}</td>
+                          <td>{money(pricing.selling_rate * Math.max(0, Number(item.quantity || 0) - Number(item.returned_quantity || 0)))}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -62,6 +62,7 @@ const icons: Record<string, any> = {
   "sales-report": CircleDollarSign,
   "gst-report": FileText,
   
+  "clinic-management": ShieldCheck,
   "users-and-roles": ShieldCheck,
   settings: Settings,
 };
@@ -88,7 +89,13 @@ const V2Sidebar = React.memo(function V2Sidebar({
       </div>
       <nav>
         {v2Nav.map((item, index) => {
-          if (item.title) return <p className="nav-title" key={`${item.title}-${index}`}>{item.title}</p>;
+          if (item.title) {
+            const hasVisibleChild = v2Nav
+              .slice(index + 1)
+              .find((next) => next.title || allowedPages.includes(next.label || ""));
+            if (!hasVisibleChild || hasVisibleChild.title) return null;
+            return <p className="nav-title" key={`${item.title}-${index}`}>{item.title}</p>;
+          }
           if (!allowedPages.includes(item.label || "")) return null;
           const Icon = icons[item.key || ""] || Database;
           return (
@@ -103,7 +110,6 @@ const V2Sidebar = React.memo(function V2Sidebar({
             </Link>
           );
         })}
-        
       </nav>
       <div className="sidebar-user">
         <div className="avatar">{profile.full_name.slice(0, 2).toUpperCase()}</div>

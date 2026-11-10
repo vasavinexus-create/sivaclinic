@@ -262,6 +262,82 @@ body{font-size:20px;line-height:1.45}
 }
 
 /* ── New Purchase: clean single-line horizontal entry ── */
+@media(min-width:901px){
+  .purchase-single-row-grid{
+    display:grid;
+    grid-template-columns: minmax(160px, 2.2fr) minmax(80px, 1fr) minmax(124px, 1.25fr) minmax(52px, 0.65fr) minmax(48px, 0.6fr) minmax(65px, 0.8fr) minmax(80px, 0.95fr) minmax(60px, 0.75fr) minmax(54px, 0.65fr) minmax(70px, 0.85fr) minmax(64px, 0.75fr) auto;
+    gap:6px;
+    align-items:end;
+    padding:12px;
+    border:1px solid var(--line);
+    border-radius:10px;
+    background:#f8faf9;
+    margin-top:8px;
+    margin-bottom:14px;
+    overflow:visible;
+  }
+  .purchase-single-row-grid .field{
+    margin-bottom:0;
+    min-width:0;
+  }
+  .purchase-single-row-grid .field > span{
+    display:block;
+    font-size:12px !important;
+    font-weight:700 !important;
+    color:#334155;
+    text-transform:uppercase;
+    letter-spacing:0.02em;
+    padding:0 2px 6px;
+    margin-bottom:6px;
+    border-bottom:2px solid #cbd5e1;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .purchase-single-row-grid .field > input,
+  .purchase-single-row-grid .search-box{
+    height:38px !important;
+    min-height:38px !important;
+    padding:6px 8px !important;
+    font-size:14px !important;
+    width:100%;
+    box-sizing:border-box;
+  }
+  .purchase-single-row-grid .search-box input{
+    height:100% !important;
+    min-height:0 !important;
+    padding:0 4px !important;
+    font-size:14px !important;
+  }
+  .purchase-single-row-grid .add-btn-field{
+    display:flex;
+    flex-direction:column;
+    margin-bottom:0;
+  }
+  .purchase-single-row-grid .add-purchase-item{
+    height:38px !important;
+    min-height:38px !important;
+    padding:0 12px !important;
+    font-size:14px !important;
+    white-space:nowrap;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:4px;
+  }
+}
+@media(max-width:900px){
+  .purchase-single-row-grid{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:14px;
+    margin-bottom:14px;
+  }
+  .purchase-single-row-grid .add-btn-field > span{
+    display:none;
+  }
+}
+
 .purchase-main-grid{
   display:grid;
   grid-template-columns: minmax(180px, 1.8fr) minmax(90px, 1fr) minmax(125px, 1.1fr) minmax(65px, 0.7fr) minmax(60px, 0.6fr) minmax(65px, 0.7fr) minmax(105px, 1.1fr) minmax(85px, 0.9fr) minmax(85px, 0.9fr) auto;
@@ -454,6 +530,86 @@ body{font-size:20px;line-height:1.45}
 
 
 .v2-shell .content { max-width: 100% !important; }
+.v2-shell .form-panel, .app-shell .form-panel { max-width: 100% !important; width: 100% !important; }
+.app-shell .async-select .search-box { max-width: 100% !important; width: 100% !important; height: auto !important; min-height: 58px !important; }
+.app-shell .async-selected-display, .app-shell .async-options button { white-space: normal !important; word-break: break-word !important; overflow-wrap: anywhere !important; height: auto !important; }
+.app-shell .search-box .async-clear-btn { min-height: 28px !important; height: 28px !important; width: 28px !important; padding: 0 !important; border: none !important; background: transparent !important; box-shadow: none !important; flex-shrink: 0; }
+.app-shell .rx-timing-chip { font-size: 14px !important; line-height: 1.25 !important; }
+.app-shell .rx-table-timing-row {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(40px, 1fr)) !important;
+  gap: 8px !important;
+  align-items: center !important;
+  width: 100% !important;
+}
+.app-shell .rx-table-timing-btn {
+  width: 100% !important;
+  min-width: 40px !important;
+  height: 40px !important;
+  min-height: 40px !important;
+  padding: 0 8px !important;
+  border-radius: 8px !important;
+  font-size: 14px !important;
+  font-weight: 800 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+}
+.rx-details-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 2fr) minmax(160px, 1.1fr) minmax(100px, 0.65fr) minmax(110px, 0.7fr);
+  gap: 12px;
+  align-items: end;
+  width: 100%;
+}
+@media(min-width: 901px) {
+  .consultation-top-grid { grid-template-columns: minmax(280px, 1.6fr) minmax(160px, 0.8fr) minmax(180px, 0.9fr) !important; align-items: end; }
+  .consultation-vitals-grid { grid-template-columns: repeat(6, minmax(110px, 1fr)) !important; }
+  .preexam-top-grid { grid-template-columns: minmax(110px, 0.5fr) minmax(280px, 1.5fr) minmax(240px, 1.2fr) !important; align-items: end; }
+}
+@media(max-width: 900px) and (min-width: 601px) {
+  .rx-details-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}
+@media(max-width: 600px) {
+  .rx-details-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .rx-add-btn-row button {
+    width: 100% !important;
+    justify-content: center !important;
+  }
+}
+@media(max-width: 800px) {
+  .app-shell .data-table.rx-med-table td.rx-cell-full::before {
+    display: none !important;
+    content: none !important;
+  }
+  .app-shell .data-table.rx-med-table td.rx-cell-full {
+    display: block !important;
+    width: 100% !important;
+    text-align: left !important;
+  }
+  .app-shell .data-table.rx-med-table td.rx-cell-med strong {
+    display: block !important;
+    width: 100% !important;
+    text-align: left !important;
+    font-size: 18px !important;
+  }
+  .app-shell .data-table.rx-med-table td.rx-cell-timing .rx-table-timing-row {
+    display: grid !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  .app-shell .data-table.rx-med-table td.rx-cell-action .table-edit {
+    width: 100% !important;
+    min-height: 46px !important;
+    justify-content: center !important;
+  }
+}
 
 
 .app-shell .data-table.tight-table td, .app-shell .data-table.tight-table th { font-size: 14px !important; padding: 10px 10px !important; white-space: nowrap; }
@@ -489,8 +645,33 @@ body{font-size:20px;line-height:1.45}
   .print-only { display: none !important; }
 }
 @media print {
+  html, body, .app-shell, .v2-shell, .workspace, .content {
+    overflow: visible !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+    display: block !important;
+    position: static !important;
+  }
   .print-only { display: block !important; }
   .no-print { display: none !important; }
+  .print-sheet {
+    display: block !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .print-sheet-break-after {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+  .print-sheet-break-before {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+  .print-page-break { page-break-after: always !important; break-after: page !important; height: 0 !important; margin: 0 !important; border: none !important; }
   
   /* Print Layout Styles */
   .print-header { text-align: center; border-bottom: 2px solid #ccc; padding-bottom: 20px; margin-bottom: 20px; }
@@ -501,14 +682,14 @@ body{font-size:20px;line-height:1.45}
   .print-details .patient-info { flex: 1; }
   .print-details .invoice-info { text-align: right; }
   
-  .print-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 12px; }
-  .print-table th, .print-table td { border: 1px solid #ccc; padding: 8px 12px !important; text-align: left; }
+  .print-table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 12px !important; }
+  .print-table th, .print-table td, .app-shell .print-table th, .app-shell .print-table td { border: 1px solid #ccc; padding: 6px 8px !important; text-align: left; font-size: 12px !important; }
   .print-table th { background: #eee !important; font-weight: bold; }
-  .print-table .right { text-align: right; }
+  .print-table .right, .app-shell .print-table .right { text-align: right !important; }
   
-  .print-totals { width: 300px; float: right; border-collapse: collapse; font-size: 14px; }
-  .print-totals td { padding: 4px 8px; text-align: right; }
-  .print-totals .total-row { font-size: 18px; font-weight: bold; border-top: 2px solid #ccc; }
+  .print-totals { width: 300px; float: right; border-collapse: collapse; font-size: 14px !important; }
+  .print-totals td, .app-shell .print-totals td { padding: 4px 8px; text-align: right; font-size: 14px !important; }
+  .print-totals .total-row, .app-shell .print-totals .total-row td { font-size: 16px !important; font-weight: bold; border-top: 2px solid #ccc; }
   
   /* Clearfix */
   .print-clear { clear: both; }
@@ -599,12 +780,12 @@ body{font-size:20px;line-height:1.45}
   .v2-toolbar-controls .toolbar-refresh svg{width:20px;height:20px;margin:0}
 }
 
-@media(max-width:800px) {
+@media screen and (max-width:800px) {
   body, html { overflow-x: hidden; width: 100%; max-width: 100vw; }
   .content, .app-shell, .v2-shell { max-width: 100vw !important; overflow-x: hidden; box-sizing: border-box; }
 }
 
-@media(max-width:800px) {
+@media screen and (max-width:800px) {
   .app-shell, .app-shell p, .app-shell span, .app-shell small, .app-shell label, .app-shell input, .app-shell textarea, .app-shell select, .app-shell button, .app-shell td { font-size: 16px !important; }
   .app-shell h1 { font-size: 32px !important; }
   .app-shell h2, .app-shell .panel-title { font-size: 24px !important; }

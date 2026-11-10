@@ -267,7 +267,7 @@ declare
   v_existing_profile uuid;
   v_existing_invite uuid;
 begin
-  if public.current_role() <> 'admin'::public.app_role and not public.is_software_owner() then
+  if public.current_role() <> 'admin'::public.app_role then
     raise exception 'Only clinic admins can create logins';
   end if;
   if v_org_id is null then raise exception 'Clinic organization not found for this user'; end if;
@@ -338,6 +338,11 @@ declare
   v_invite public.user_invites%rowtype;
   v_user_id uuid;
   v_email text;
+  v_org_active boolean := true;
+  v_org_id uuid;
+  v_org_clinic_name text;
+  v_org_name text;
+  v_org_phone text;
 begin
   if v_username = '' then raise exception 'Username is required'; end if;
 
@@ -352,6 +357,21 @@ begin
      or v_invite.password_hash is null
      or v_invite.password_hash <> extensions.crypt(p_password, v_invite.password_hash) then
     raise exception 'Invalid username or password';
+  end if;
+
+  select coalesce(active, true), id, clinic_name, name, phone
+  into v_org_active, v_org_id, v_org_clinic_name, v_org_name, v_org_phone
+  from public.organizations
+  where id = v_invite.organization_id;
+
+  if v_invite.role <> 'software_owner'::public.app_role and coalesce(v_org_active, true) = false then
+    raise exception 'CLINIC_PAUSED:%', json_build_object(
+      'id', v_org_id,
+      'clinic_name', v_org_clinic_name,
+      'name', v_org_name,
+      'phone', v_org_phone,
+      'active', false
+    )::text;
   end if;
 
   v_email := lower(coalesce(v_invite.login_email, public.login_email_for_username(v_username)));
@@ -510,12 +530,37 @@ declare
   v_invite public.user_invites%rowtype;
   v_profile public.profiles%rowtype;
   v_auth_email text;
+  v_org_active boolean := true;
+  v_org_id uuid;
+  v_org_clinic_name text;
+  v_org_name text;
+  v_org_phone text;
 begin
   if v_username = '' then raise exception 'Username is required'; end if;
 
   -- 0. Software Owner Admin shortcut
   if v_username = 'vasavinexus' then
     return 'vasavinexus@gmail.com';
+  end if;
+
+  -- Check if clinic organization is paused for this username before proceeding
+  select coalesce(o.active, true), o.id, o.clinic_name, o.name, o.phone
+  into v_org_active, v_org_id, v_org_clinic_name, v_org_name, v_org_phone
+  from public.user_invites ui
+  join public.organizations o on o.id = ui.organization_id
+  where lower(ui.username) = v_username
+    and ui.role <> 'software_owner'::public.app_role
+  order by ui.created_at desc
+  limit 1;
+
+  if coalesce(v_org_active, true) = false then
+    raise exception 'CLINIC_PAUSED:%', json_build_object(
+      'id', v_org_id,
+      'clinic_name', v_org_clinic_name,
+      'name', v_org_name,
+      'phone', v_org_phone,
+      'active', false
+    )::text;
   end if;
 
   -- 1. Check if an active user invite exists for this username
@@ -551,6 +596,21 @@ begin
 
   if v_profile.id is null then
     raise exception 'Invalid username or password';
+  end if;
+
+  select coalesce(active, true), id, clinic_name, name, phone
+  into v_org_active, v_org_id, v_org_clinic_name, v_org_name, v_org_phone
+  from public.organizations
+  where id = v_profile.organization_id;
+
+  if v_profile.role <> 'software_owner'::public.app_role and coalesce(v_org_active, true) = false then
+    raise exception 'CLINIC_PAUSED:%', json_build_object(
+      'id', v_org_id,
+      'clinic_name', v_org_clinic_name,
+      'name', v_org_name,
+      'phone', v_org_phone,
+      'active', false
+    )::text;
   end if;
 
   -- Sync auth password for existing profile

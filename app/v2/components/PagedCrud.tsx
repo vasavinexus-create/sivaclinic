@@ -72,6 +72,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
   const [suppliers, setSuppliers] = useState<Row[]>([]);
   const [org, setOrg] = useState<any>(null);
   const [isPrintingCustom, setIsPrintingCustom] = useState(false);
+  const [activeRowIndex, setActiveRowIndex] = useState(-1);
   const editable = module.editable !== false && module.fields.length > 0;
   const state = usePagedQuery({ module, page, pageSize, search, filters, organizationId: profile.organization_id });
 
@@ -83,6 +84,65 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
       supabase?.from('organizations').select('*').eq('id', profile.organization_id!).single().then(({data}) => {
          if (data) setOrg(data);
       });
+    }
+    if (module.key === 'doctors' && supabase && profile.organization_id) {
+      (async () => {
+        const [{ data: profs }, { data: invs }, { data: docs }] = await Promise.all([
+          supabase.from('profiles').select('id,username,full_name,mobile,active,role').eq('organization_id', profile.organization_id).eq('role', 'doctor'),
+          supabase.from('user_invites').select('id,username,full_name,role,doctor_id,accepted_by,active').eq('organization_id', profile.organization_id).eq('role', 'doctor'),
+          supabase.from('doctors').select('id,profile_id,name').eq('organization_id', profile.organization_id),
+        ]);
+        const existingDocs = docs || [];
+        let changed = false;
+
+        for (const p of profs || []) {
+          const linked = existingDocs.find((d: any) => d.profile_id === p.id);
+          if (!linked) {
+            const unlinkedMatch = existingDocs.find((d: any) => !d.profile_id && String(d.name || '').trim().toLowerCase() === String(p.full_name || '').trim().toLowerCase());
+            if (unlinkedMatch) {
+              await supabase.from('doctors').update({ profile_id: p.id }).eq('id', unlinkedMatch.id);
+              unlinkedMatch.profile_id = p.id;
+              changed = true;
+            } else {
+              const { data: created } = await supabase.from('doctors').insert({
+                organization_id: profile.organization_id,
+                profile_id: p.id,
+                doctor_id: `DOC-${Date.now().toString().slice(-6)}-${p.id.slice(0, 4)}`,
+                name: p.full_name,
+                mobile: p.mobile || null,
+                default_fee: 0,
+                active: p.active !== false,
+              }).select('id,profile_id,name').single();
+              if (created) {
+                existingDocs.push(created);
+                changed = true;
+              }
+            }
+          }
+        }
+
+        for (const inv of invs || []) {
+          const hasDoc = (inv.doctor_id && existingDocs.some((d: any) => d.id === inv.doctor_id)) ||
+            (inv.accepted_by && existingDocs.some((d: any) => d.profile_id === inv.accepted_by));
+          if (!hasDoc) {
+            const { data: created } = await supabase.from('doctors').insert({
+              organization_id: profile.organization_id,
+              profile_id: inv.accepted_by || null,
+              doctor_id: `DOC-${Date.now().toString().slice(-6)}-${inv.id.slice(0, 4)}`,
+              name: inv.full_name,
+              default_fee: 0,
+              active: inv.active !== false,
+            }).select('id,profile_id,name').single();
+            if (created) {
+              existingDocs.push(created);
+              await supabase.from('user_invites').update({ doctor_id: created.id }).eq('id', inv.id);
+              changed = true;
+            }
+          }
+        }
+
+        if (changed) state.reload();
+      })();
     }
   }, [module.key, profile.organization_id]);
   const pageCount = Math.max(1, Math.ceil(state.count / pageSize));
@@ -164,9 +224,30 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
     </div>
     <div className={`panel ${isPrintingCustom ? "print-hide" : ""}`}>
       <div className="v2-toolbar">
-        <div className="search-box"><Search/><input placeholder={`Search ${module.title.toLowerCase()} in database`} value={searchInput} onChange={(event) => setSearchInput(event.currentTarget.value)}/></div>
+        <div className="search-box"><Search/><input placeholder={`Search ${module.title.toLowerCase()} in database`} value={searchInput} onChange={(event) => { setSearchInput(event.currentTarget.value); setActiveRowIndex(-1); }} onKeyDown={(e) => {
+          if (!state.rows.length) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActiveRowIndex((prev) => (prev < state.rows.length - 1 ? prev + 1 : 0));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActiveRowIndex((prev) => (prev > 0 ? prev - 1 : state.rows.length - 1));
+          } else if (e.key === "Enter" && activeRowIndex >= 0 && activeRowIndex < state.rows.length) {
+            e.preventDefault();
+            const row = state.rows[activeRowIndex];
+            if (editable) {
+              setEditing(row);
+              setOpen(true);
+            } else if (module.selectable) {
+              const next = new Set(selected);
+              if (next.has(row.id)) next.delete(row.id);
+              else next.add(row.id);
+              setSelected(next);
+            }
+          }
+        }}/></div>
         <div className="v2-toolbar-controls">
-          {module.filters?.map((filter) => <label className="v2-filter" key={filter.key}><span>{filter.label}</span><select value={filters[filter.key] || ""} onChange={(event) => { setPage(1); setFilters((current) => ({ ...current, [filter.key]: event.currentTarget.value })); }}><option value="">All</option>{filter.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>)}
+          {module.filters?.map((filter) => <label className="v2-filter" key={filter.key}><span>{filter.label}</span><select value={filters[filter.key] || ""} onChange={(event) => { const val = event.currentTarget.value; setPage(1); setFilters((current) => ({ ...current, [filter.key]: val })); }}><option value="">All</option>{filter.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>)}
           <label className="v2-filter"><span>Rows</span><select value={pageSize} onChange={(event) => { setPage(1); setPageSize(Number(event.currentTarget.value)); }}>{pageSizeOptions.map((size) => <option key={size} value={size}>{size}</option>)}</select></label>
           <button className="secondary toolbar-refresh" onClick={state.reload}><RefreshCw size={15}/> Refresh</button>
         </div>
@@ -189,7 +270,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
     setSelected(new Set());
   }
 }} /></th>}
-{module.columns.map(([key, label]) => <th key={key}>{label}</th>)}{editable && <th className="no-print">Action</th>}</tr></thead><tbody>{state.rows.map((row) => <tr key={row.id} className={module.selectable && selected.size > 0 && !selected.has(row.id) ? "no-print" : ""}>
+{module.columns.map(([key, label]) => <th key={key}>{label}</th>)}{editable && <th className="no-print">Action</th>}</tr></thead><tbody>{state.rows.map((row, idx) => <tr key={row.id} style={idx === activeRowIndex ? { background: "#e6f4f1" } : undefined} className={module.selectable && selected.size > 0 && !selected.has(row.id) ? "no-print" : ""}>
 {module.selectable && <td className="no-print"><input type="checkbox" checked={selected.has(row.id)} onChange={e => {
   const next = new Set(selected);
   if (e.target.checked) next.add(row.id);

@@ -96,6 +96,7 @@ export function PurchaseImportWorkflow({ profile, notify }: { profile: Profile; 
   // Modal states
   const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null);
   const [productSearchQuery, setProductSearchQuery] = useState("");
+  const [productSearchActiveIndex, setProductSearchActiveIndex] = useState(0);
   const [showCreateProductModal, setShowCreateProductModal] = useState(false);
   const [newProductForm, setNewProductForm] = useState<Partial<Row>>({});
 
@@ -1223,7 +1224,32 @@ const stitchImages = async (files: File[]): Promise<string> => {
               <div style={{ fontSize: "11px", fontWeight: "bold", color: "var(--muted)", marginBottom: "6px" }}>SEARCH COMPLETE PRODUCT MASTER</div>
               <div className="search-box" style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "8px" }}>
                 <Search size={16} color="#64748b" />
-                <input type="text" placeholder="Search product name, code, barcode..." value={productSearchQuery} onChange={(e) => setProductSearchQuery(e.target.value)} style={{ color: "#0f172a", background: "transparent" }} />
+                <input
+                  type="text"
+                  placeholder="Search product name, code, barcode..."
+                  value={productSearchQuery}
+                  onChange={(e) => {
+                    setProductSearchQuery(e.target.value);
+                    setProductSearchActiveIndex(0);
+                  }}
+                  onKeyDown={(e) => {
+                    const matched = productsMaster
+                      .filter((p) => !productSearchQuery || p.name.toLowerCase().includes(productSearchQuery.toLowerCase()) || (p.product_id && p.product_id.toLowerCase().includes(productSearchQuery.toLowerCase())))
+                      .slice(0, 15);
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      if (matched.length > 0) setProductSearchActiveIndex((prev) => (prev < matched.length - 1 ? prev + 1 : 0));
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      if (matched.length > 0) setProductSearchActiveIndex((prev) => (prev > 0 ? prev - 1 : matched.length - 1));
+                    } else if (e.key === "Enter") {
+                      e.preventDefault();
+                      const chosen = matched[productSearchActiveIndex] || matched[0];
+                      if (chosen) handleSelectProduct(editingItemIndex, chosen);
+                    }
+                  }}
+                  style={{ color: "#0f172a", background: "transparent" }}
+                />
               </div>
             </div>
 
@@ -1231,8 +1257,8 @@ const stitchImages = async (files: File[]): Promise<string> => {
               {productsMaster
                 .filter((p) => !productSearchQuery || p.name.toLowerCase().includes(productSearchQuery.toLowerCase()) || (p.product_id && p.product_id.toLowerCase().includes(productSearchQuery.toLowerCase())))
                 .slice(0, 15)
-                .map((prod) => (
-                  <div key={prod.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--line)" }}>
+                .map((prod, idx) => (
+                  <div key={prod.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--line)", background: idx === productSearchActiveIndex ? "#e6f4f1" : undefined }}>
                     <div>
                       <strong>{prod.name}</strong>
                       <div style={{ fontSize: "11px", color: "var(--muted)" }}>Code: {prod.product_id} | Mfg: {prod.manufacturer || "-"} | MRP: {money(prod.mrp)}</div>

@@ -6,7 +6,14 @@ export const powerSync = new PowerSyncDatabase({
   database: {
     dbFilename: 'sivacare.db'
   },
-  schema: AppSchema
+  schema: AppSchema,
+  logger: {
+    log(record) {
+      if (record.level >= 40 && !record.message?.includes('Sync error')) {
+        console.warn(`[PowerSync]: ${record.message}`, record.error ?? '');
+      }
+    }
+  }
 });
 
 export const connector = new SupabaseConnector();

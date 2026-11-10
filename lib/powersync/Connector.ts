@@ -3,18 +3,19 @@ import { supabase } from '../supabase';
 
 export class SupabaseConnector implements PowerSyncBackendConnector {
   async fetchCredentials() {
-    if (!supabase) {
-      throw new Error('Supabase client not initialized');
+    const endpoint = process.env.NEXT_PUBLIC_POWERSYNC_URL?.trim();
+    if (!supabase || !endpoint) {
+      return null;
     }
     
     const { data: { session }, error } = await supabase.auth.getSession();
     
     if (error || !session) {
-      throw new Error('Not logged in');
+      return null;
     }
 
     return {
-      endpoint: process.env.NEXT_PUBLIC_POWERSYNC_URL || '',
+      endpoint,
       token: session.access_token
     };
   }

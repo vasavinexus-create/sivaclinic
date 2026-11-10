@@ -1,17 +1,28 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../../lib/supabase";
 import {
   Activity, AlertTriangle, Bell, Boxes, CalendarDays, Camera, CheckCircle2, ChevronDown, CircleDollarSign,
   ClipboardPlus, CreditCard, FileText, LayoutDashboard, LoaderCircle, LogOut, Menu, PackagePlus,
-  Paperclip, Phone, Pill, Plus, Pencil, RefreshCw, Search, Settings, ShoppingCart, Stethoscope, Trash2, UserRoundPlus,
+  Paperclip, Pause, Play, Phone, Pill, Plus, Pencil, QrCode, RefreshCw, Search, Settings, ShoppingCart, Stethoscope, Trash2, UserRoundPlus,
   Users, Wallet, X, ShieldCheck, TrendingUp, IndianRupee
 } from "lucide-react";
+import {
+  DEFAULT_OWNER_PAYMENT,
+  OwnerPaymentDefaults,
+  ClinicPaymentConfig,
+  getStoredOwnerPaymentDefaults,
+  saveStoredOwnerPaymentDefaults,
+  parseClinicPaymentConfig,
+  serializeClinicNameWithPayment,
+  buildUpiPaymentUri,
+  UpiQrCodeSvg,
+} from "../lib/clinic-payment";
 
 type Row = Record<string, any>;
 type Profile = { id:string; organization_id:string; full_name:string; role:string; active:boolean };
-type Organization = { id:string; clinic_name:string|null; pharmacy_name:string|null; sales_gst_mode?:string|null };
+type Organization = { id:string; clinic_name:string|null; pharmacy_name:string|null; sales_gst_mode?:string|null; active?:boolean|null };
 type ModuleConfig = { table:string; title:string; subtitle:string; columns:Array<[string,string]>; fields:Array<{key:string;label:string;type?:string;required?:boolean;options?:string[];defaultVal?:number}> };
 const crudEntityLabels:Record<string,string>={patients:"Patient",products:"Medicine",suppliers:"Supplier",doctors:"Doctor",expenses:"Expense"};
 const crudNewSubtitles:Record<string,string>={patients:"Patient ID will be generated automatically",products:"Medicine ID will be generated automatically",suppliers:"Create a supplier record",doctors:"Create a doctor record",expenses:"Create an expense record"};
@@ -28,7 +39,7 @@ const nav:NavItem[] = [
   {title:"ACCOUNTS"}, {label:"Day Book",icon:FileText}, {label:"Cash Ledger",icon:Wallet}, {label:"Sales Account",icon:CircleDollarSign}, {label:"Expense Entry",icon:CreditCard}, {label:"Ledger Creation",icon:ClipboardPlus}, {label:"Ledger Statement",icon:FileText}, {label:"Ledger Group",icon:Boxes}, {label:"Current Balance",icon:Wallet}, {label:"Balance Sheet",icon:TrendingUp}, {label:"Profit & Loss",icon:IndianRupee},
   {label:"Reports",icon:TrendingUp}, {title:"ADMINISTRATION"}, {label:"Users & Roles",icon:ShieldCheck}, {label:"Settings",icon:Settings},
 ];
-const ownerNav:NavItem[] = [{label:"Clinic Management",icon:ShieldCheck},{label:"Settings",icon:Settings}];
+const ownerNav:NavItem[] = [{label:"Clinic Management",icon:ShieldCheck}];
 const allPageLabels = nav.filter(n=>n.label).map(n=>n.label!);
 const rolePages:Record<string,string[]> = {
   admin: allPageLabels,
@@ -137,14 +148,16 @@ export default function Home(){
   const [allowedPages,setAllowedPages]=useState<string[]|null>(null); const [active,setActive]=useState("Dashboard"); const [sideOpen,setSideOpen]=useState(false); const [notice,setNotice]=useState("");
   useEffect(()=>{if(!supabase){setSession(null);return} supabase.auth.getSession().then(({data})=>setSession(data.session)); const {data}=supabase.auth.onAuthStateChange((_e,s)=>setSession(s)); return()=>data.subscription.unsubscribe()},[]);
   useEffect(()=>{if(!session||!supabase){setProfile(null);return} supabase.from("profiles").select("id,organization_id,full_name,role,active").eq("id",session.user.id).single().then(({data,error})=>{setProfile(data as Profile);if(error)setNotice("Your login exists, but no active clinic profile is assigned.")})},[session]);
-  useEffect(()=>{if(!profile||!supabase){setOrganization(null);return} supabase.from("organizations").select("id,clinic_name,pharmacy_name,sales_gst_mode").eq("id",profile.organization_id).single().then(({data})=>setOrganization(data as Organization||null))},[profile]);
-  useEffect(()=>{if(!profile||!supabase){setAllowedPages(null);return} if(profile.role==="software_owner"){setAllowedPages(ownerNav.map(n=>n.label!));setActive("Clinic Management");return} supabase.from("page_permissions").select("page_key").eq("profile_id",profile.id).then(({data})=>{const pages=data?.map(x=>x.page_key).filter(Boolean)||[];setAllowedPages(pages.length?pages:(rolePages[profile.role]||["Dashboard"]));})},[profile]);
+  useEffect(()=>{if(!profile||!supabase){setOrganization(null);return} supabase.from("organizations").select("id,clinic_name,pharmacy_name,sales_gst_mode,active").eq("id",profile.organization_id).single().then(({data})=>setOrganization(data as Organization||null))},[profile]);
+  useEffect(()=>{if(!profile||!supabase){setAllowedPages(null);return} if(profile.role==="software_owner"){setAllowedPages(["Clinic Management"]);setActive("Clinic Management");return} supabase.from("page_permissions").select("page_key").eq("profile_id",profile.id).then(({data})=>{const pages=(data?.map(x=>x.page_key).filter(Boolean)||[]).filter((p:string)=>p!=="Clinic Management");setAllowedPages(pages.length?pages:(rolePages[profile.role]||["Dashboard"]));})},[profile]);
   const visibleNav=useMemo(()=>{if(!profile||!allowedPages)return[];const source=profile.role==="software_owner"?ownerNav:nav;const result:NavItem[]=[];for(const item of source){if(item.title){const next=source.slice(source.indexOf(item)+1).find(n=>n.title||allowedPages.includes(n.label||""));if(next&&!next.title)result.push(item);continue}if(allowedPages.includes(item.label||""))result.push(item)}return result},[profile,allowedPages]);
   const navShortcuts=useMemo(()=>{const used=new Set<string>();return Object.fromEntries(visibleNav.filter(n=>n.label).map(n=>[n.label!,navShortcut(n.label!,used)]))},[visibleNav]);
   const goPage=useCallback((label:string)=>{setActive(label);window.history.replaceState(null,"",`/?page=${encodeURIComponent(label)}`);setSideOpen(false)},[]);
   useEffect(()=>{const onKey=(e:KeyboardEvent)=>{if(e.ctrlKey&&e.key.toLowerCase()==="m"){e.preventDefault();setSideOpen(v=>!v);return}if(e.altKey&&!e.ctrlKey&&!e.metaKey){const hit=visibleNav.find(n=>n.label&&navShortcuts[n.label]===e.key.toLowerCase());if(hit?.label){e.preventDefault();goPage(hit.label)}}};window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey)},[visibleNav,navShortcuts,goPage]);
   useEffect(()=>{if(!allowedPages||!allowedPages.length)return;const requested=typeof window!=="undefined"?new URLSearchParams(window.location.search).get("page"):"";if(requested&&allowedPages.includes(requested)){setActive(requested);return}if(!allowedPages.includes(active))setActive(allowedPages[0])},[allowedPages,active]);
-  if(session===undefined)return <Loading/>; if(!session)return <Auth/>; if(!profile)return <PendingAccess user={session.user} message={notice}/>; if(!allowedPages)return <Loading/>;
+  if(session===undefined)return <Loading/>; if(!session)return <Auth/>; if(!profile)return <PendingAccess user={session.user} message={notice}/>;
+  if(profile.role!=="software_owner"&&(!profile.active||organization?.active===false))return <PendingAccess user={session.user} message="This clinic login is paused by the software owner due to pending software charges. Please contact the software owner to release access."/>;
+  if(!allowedPages)return <Loading/>;
   const brandName=profile.role==="software_owner"?"MEDIFLOW":organization?.clinic_name||"MEDIFLOW";
   const brandSub=profile.role==="software_owner"?"Owner Console":organization?.pharmacy_name||"Clinic & Pharmacy";
   return <main className="app-shell" onKeyDown={handleFormEnterKey}><aside className={`sidebar ${sideOpen?"open":""}`}><div className="brand"><div className="brand-mark"><img src="/mediflow-logo.jpg" alt="MEDIFLOW"/></div><div><strong>{brandName}</strong><small>{brandSub}</small></div><button className="mobile-close" title="Close menu" onClick={()=>setSideOpen(false)}><X size={20}/></button></div><nav>{visibleNav.map((n,i)=>n.title?<p className="nav-title" key={`${n.title}-${i}`}>{n.title}</p>:<button key={n.label} className={`nav-item ${active===n.label?"active":""}`} title={`Alt+${navShortcuts[n.label!]?.toUpperCase()} ${n.label}`} onClick={()=>goPage(n.label!)}>{n.icon&&<n.icon size={18}/>}<span><ShortcutLabel label={n.label!} shortcut={navShortcuts[n.label!]}/></span></button>)}</nav><div className="sidebar-user"><div className="avatar">{profile.full_name.slice(0,2).toUpperCase()}</div><div><strong>{profile.full_name}</strong><span>{profile.role.replace("_"," ")}</span></div><button className="logout-mini" title="Sign out" onClick={()=>supabase?.auth.signOut()}><LogOut size={16}/></button></div></aside>
@@ -179,18 +192,32 @@ function Auth(){
     }
     const result=await supabase.auth.signInWithPassword({email,password});
     if(!result.error)await supabase.rpc("ensure_current_user_profile");
-    setLoading(false);
     if(result.error){
+      setLoading(false);
       setMsg(authErrorMessage(result.error.message));
       return
     }
+    const {data:userData}=await supabase.auth.getUser();
+    if(userData?.user){
+      const {data:prof}=await supabase.from("profiles").select("id,organization_id,role,active").eq("id",userData.user.id).single();
+      if(prof&&prof.role!=="software_owner"){
+        const {data:orgData}=await supabase.from("organizations").select("id,active").eq("id",prof.organization_id).single();
+        if(!prof.active||orgData?.active===false){
+          await supabase.auth.signOut();
+          setLoading(false);
+          setMsg("This clinic login is paused due to pending software charges. Please contact the software owner to release access.");
+          return
+        }
+      }
+    }
+    setLoading(false);
     setMsg("Signed in.");
   };
   return <div className="auth-page"><form className="auth-card" onKeyDown={handleFormEnterKey} onSubmit={submit}><div className="auth-brand"><div className="brand-mark"><img src="/mediflow-logo.jpg" alt="MEDIFLOW"/></div><div><strong>MEDIFLOW</strong><small>Clinic & Pharmacy Platform</small></div></div><h1>Welcome back</h1><Field name="username" label="Username" required/><Field name="password" label="Password" type="password" required/><button className="primary auth-submit" disabled={loading}>{loading?<LoaderCircle className="spin"/>:"Sign in"}</button>{msg&&<div className="auth-message">{msg}</div>}</form><div className="auth-footer-brand"><img src="/vasavi-nexus-logo-cropped.jpeg" alt="Vasavi Nexus"/><span>Developed and maintained by <b>Vasavi Nexus</b><small>vasavinexus@gmail.com</small></span></div></div>
 }
-function PendingAccess({user,message}:{user:any;message:string}){return <div className="auth-page"><div className="auth-card"><div className="brand-mark"><img src="/mediflow-logo.jpg" alt="MEDIFLOW"/></div><h1>Access not assigned</h1><p>{message||`${user.email} is signed in, but no clinic login has been created for this username.`}</p><div className="auth-message">Ask the software owner or clinic admin to create this user and assign page access.</div><button type="button" className="auth-switch" onClick={()=>supabase?.auth.signOut()}>Sign out</button></div></div>}
-function Loading(){return <div className="loading-page"><LoaderCircle className="spin"/><span>Connecting to MEDIFLOWΓÇª</span></div>}
-const authErrorMessage=(message:string)=>message==="Invalid login credentials"?"Invalid username or password. Create/reset this login from Clinic Management or Users & Roles.":message.toLowerCase().includes("email not confirmed")?"Email confirmation is enabled in Supabase. Turn off Confirm email for username login, then try again.":message.toLowerCase().includes("signup")?"Supabase signup is disabled. Enable signup for first-time clinic username login.":message;
+function PendingAccess({user,message}:{user:any;message:string}){return <div className="auth-page"><div className="auth-card"><div className="brand-mark"><img src="/mediflow-logo.jpg" alt="MEDIFLOW"/></div><h1>Access restricted</h1><p>{message||`${user.email} is signed in, but no clinic login has been created for this username.`}</p><div className="auth-message">Contact the software owner or clinic admin for assistance.</div><button type="button" className="auth-switch" onClick={()=>supabase?.auth.signOut()}>Sign out</button></div></div>}
+function Loading(){return <div className="loading-page"><LoaderCircle className="spin"/><span>Connecting to MEDIFLOW…</span></div>}
+const authErrorMessage=(message:string)=>message==="Invalid login credentials"?"Invalid username or password, or clinic login is paused. Contact the software owner or clinic admin.":message.toLowerCase().includes("email not confirmed")?"Email confirmation is enabled in Supabase. Turn off Confirm email for username login, then try again.":message.toLowerCase().includes("signup")?"Supabase signup is disabled. Enable signup for first-time clinic username login.":message;
 
 function Page({active,profile,organization,notify}:{active:string;profile:Profile;organization:Organization|null;notify:(s:string)=>void}){
   if(active==="Dashboard")return <Dashboard/>; if(active==="Doctors")return <DoctorsPage profile={profile} notify={notify}/>; if(configs[active])return <CrudPage config={configs[active]} profile={profile} notify={notify}/>;
@@ -201,7 +228,7 @@ function Page({active,profile,organization,notify}:{active:string;profile:Profil
   if(active==="New Purchase")return <Purchase profile={profile} organization={organization} notify={notify}/>; if(active==="Purchase History")return <Purchases profile={profile} notify={notify}/>; if(active==="Deleted Bills Audit")return <DeletedBillsAudit profile={profile} notify={notify}/>; if(active==="Rate Edit Verification")return <RateEditVerification profile={profile} notify={notify}/>;
   if(["Day Book","Cash Ledger","Sales Account","Expense Entry","Ledger Creation","Ledger Statement","Ledger Group","Current Balance","Balance Sheet","Profit & Loss"].includes(active))return <AccountsPage view={active} profile={profile} notify={notify}/>;
   if(active==="Supplier Payments")return <SupplierPayment profile={profile} notify={notify}/>; if(active==="Supplier Ledger")return <SupplierLedger/>;
-  if(active==="Clinic Management")return <ClinicManagementWorkflow notify={notify}/>; if(active==="Users & Roles")return <UsersPage profile={profile} notify={notify}/>;
+  if(active==="Clinic Management")return <ClinicManagementWorkflow profile={profile} notify={notify}/>; if(active==="Users & Roles")return <UsersPage profile={profile} notify={notify}/>;
   return <ReportPage title={active}/>;
 }
 
@@ -561,18 +588,203 @@ function AccountPanel({title,subtitle,rows,cols,from,to,setFrom,setTo}:{title:st
 function AccountSummary({title,rows,from,to,setFrom,setTo}:{title:string;rows:Array<[string,number]>;from:string;to:string;setFrom:(v:string)=>void;setTo:(v:string)=>void}){return <><PageHead title={title} subtitle="Live account balances from clinic transactions"/><div className="panel"><DateRange from={from} to={to} setFrom={setFrom} setTo={setTo}/><section className="summary-strip account-summary">{rows.map(([label,value])=><Summary key={label} title={label} value={money(value)} hint="Selected period"/>)}</section></div></>}
 function DailyClosing({profile,notify}:{profile:Profile;notify:(s:string)=>void}){const save=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const form=e.currentTarget;const f=new FormData(form),opening=Number(f.get("opening_cash")),doctor=Number(f.get("doctor_fee_cash")||0),pharmacy=Number(f.get("pharmacy_cash_sales")||0),other=Number(f.get("other_income")||0),supplier=Number(f.get("supplier_payments")||0),expenses=Number(f.get("expenses")||0),refunds=Number(f.get("refunds")||0),expected=opening+doctor+pharmacy+other-supplier-expenses-refunds;const {error}=await supabase!.from("daily_closings").insert({organization_id:profile.organization_id,closing_date:f.get("closing_date"),opening_cash:opening,doctor_fee_cash:doctor,pharmacy_cash_sales:pharmacy,other_income:other,supplier_payments:supplier,expenses,refunds,expected_cash:expected,actual_cash:Number(f.get("actual_cash")),closed_by:profile.id});notify(error?.message||"Daily closing saved");if(!error)form.reset()};return <SimpleForm title="Daily Closing" subtitle="Store expected versus actual cash permanently" onSubmit={save}>{["closing_date","opening_cash","doctor_fee_cash","pharmacy_cash_sales","other_income","supplier_payments","expenses","refunds","actual_cash"].map(k=><Field key={k} name={k} label={k.replaceAll("_"," ")} type={k==="closing_date"?"date":"number"} required={k==="closing_date"||k==="opening_cash"||k==="actual_cash"}/>)}</SimpleForm>}
 function SimpleForm({title,subtitle,onSubmit,children}:{title:string;subtitle:string;onSubmit:(e:FormEvent<HTMLFormElement>)=>void;children:React.ReactNode}){return <><PageHead title={title} subtitle={subtitle}/><div className="panel form-panel"><form onSubmit={onSubmit}><div className="form-grid">{children}</div><div className="form-actions"><button className="primary"><CheckCircle2 size={16}/> Save</button></div></form></div></>}
-export function ClinicManagementWorkflow({notify}:{notify:(s:string)=>void}){
-  const orgs=useRows("organizations","id,clinic_name,pharmacy_name,address,phone,gst_number,drug_license_number,sales_gst_mode,active,created_at");
+export function ClinicManagementWorkflow({profile,notify}:{profile?:Profile;notify:(s:string)=>void}){
+  const orgs=useRows("organizations","id,name,clinic_name,pharmacy_name,address,phone,gst_number,drug_license_number,sales_gst_mode,active,created_at");
   const invites=useRows("user_invites","id,organization_id,username,full_name,role,active,accepted_at,created_at");
   const profiles=useRows("profiles","id,organization_id,username,full_name,role,active,created_at");
-  const [saving,setSaving]=useState(false),[usernameStatus,setUsernameStatus]=useState(""),[editingClinic,setEditingClinic]=useState<Row|null>(null),[resetClinic,setResetClinic]=useState<Row|null>(null);
+  const [saving,setSaving]=useState(false);
+  const [pausingId,setPausingId]=useState<string|null>(null);
+  const [usernameStatus,setUsernameStatus]=useState("");
+  const [editingClinic,setEditingClinic]=useState<Row|null>(null);
+  const [resetClinic,setResetClinic]=useState<Row|null>(null);
+
+  // Payment & Pause Modal States
+  const [pauseModalClinic,setPauseModalClinic]=useState<Row|null>(null);
+  const [pauseAmount,setPauseAmount]=useState<number>(0);
+  const [pauseUpiId,setPauseUpiId]=useState<string>("");
+  const [pausePayee,setPausePayee]=useState<string>("");
+  const [pauseNote,setPauseNote]=useState<string>("");
+  const [ownerSettingsOpen,setOwnerSettingsOpen]=useState(false);
+  const [ownerDefaults,setOwnerDefaults]=useState<OwnerPaymentDefaults>(()=>getStoredOwnerPaymentDefaults());
+  const [editPaymentConfig,setEditPaymentConfig]=useState<ClinicPaymentConfig|null>(null);
+
   const [resetMode,setResetMode]=useState("full"),[resetFrom,setResetFrom]=useState(`${new Date().getFullYear()}-04-01`),[resetTo,setResetTo]=useState(`${new Date().getFullYear()+1}-03-31`),[resetSelected,setResetSelected]=useState<string[]>(["sales","purchases","patient_history","inventory","supplier_accounts","cash_ledger","accounting","expenses","deleted_audit"]),[resetCounts,setResetCounts]=useState<Record<string,number>>({}),[resetConfirm,setResetConfirm]=useState(""),[resetLoading,setResetLoading]=useState(false);
+
+  if(profile&&profile.role!=="software_owner")return <><PageHead title="Clinic Management" subtitle="Only the software owner can manage clinics"/><ErrorBox text="Software owner access is required for this page."/></>;
+
   const checkUsername=async(username:string)=>{if(!username.trim()){setUsernameStatus("");return}const {data,error}=await supabase!.rpc("username_available",{p_username:username});setUsernameStatus(error?error.message:data?"Username available":"Username already used")};
-  const save=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const form=e.currentTarget;const f=new FormData(form);setSaving(true);const available=await supabase!.rpc("username_available",{p_username:f.get("admin_username")});if(available.error||!available.data){setSaving(false);notify(available.error?.message||"Username already used");return}const {error}=await supabase!.rpc("create_clinic_with_admin_username",{p_clinic_name:f.get("clinic_name"),p_admin_username:f.get("admin_username"),p_admin_password:f.get("admin_password"),p_admin_name:f.get("admin_name"),p_phone:f.get("phone")||null});if(error){setSaving(false);notify(error.message);return}const salesGstMode=String(f.get("sales_gst_mode")||"price_plus_gst");await supabase!.from("organizations").update({sales_gst_mode:salesGstMode}).eq("clinic_name",String(f.get("clinic_name")));setSaving(false);notify("Clinic created. Admin can login with username and password.");form.reset();setUsernameStatus("");orgs.reload();invites.reload()};
+
+  const save=async(e:FormEvent<HTMLFormElement>)=>{
+    e.preventDefault();
+    const form=e.currentTarget;
+    const f=new FormData(form);
+    setSaving(true);
+    const available=await supabase!.rpc("username_available",{p_username:f.get("admin_username")});
+    if(available.error||!available.data){setSaving(false);notify(available.error?.message||"Username already used");return}
+    const {data:newOrgId,error}=await supabase!.rpc("create_clinic_with_admin_username",{p_clinic_name:f.get("clinic_name"),p_admin_username:f.get("admin_username"),p_admin_password:f.get("admin_password"),p_admin_name:f.get("admin_name"),p_phone:f.get("phone")||null});
+    if(error){setSaving(false);notify(error.message);return}
+    const salesGstMode=String(f.get("sales_gst_mode")||"price_plus_gst");
+    const clinicNameStr=String(f.get("clinic_name"));
+    const initPayMeta=serializeClinicNameWithPayment(clinicNameStr,newOrgId||undefined,{
+      amount:Number(f.get("initial_amount")||ownerDefaults.default_amount||0),
+      upi_id:ownerDefaults.upi_id,
+      payee_name:ownerDefaults.payee_name,
+      note:`${clinicNameStr} - Software Charges`,
+    });
+    await supabase!.from("organizations").update({sales_gst_mode:salesGstMode,name:initPayMeta}).eq("clinic_name",clinicNameStr);
+    setSaving(false);
+    notify("Clinic created. Admin can login with username and password.");
+    form.reset();
+    setUsernameStatus("");
+    orgs.reload();
+    invites.reload();
+  };
+
   const adminProfile=editingClinic?profiles.rows.find(x=>x.organization_id===editingClinic.id&&x.role==="admin"):null;
   const adminInvite=editingClinic?invites.rows.find(x=>x.organization_id===editingClinic.id&&x.role==="admin"):null;
   const adminLogin=adminProfile||adminInvite;
-  const saveClinicEdit=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();if(!editingClinic)return;const f=new FormData(e.currentTarget);setSaving(true);const {error}=await supabase!.rpc("update_clinic_details",{p_organization_id:editingClinic.id,p_clinic_name:f.get("clinic_name"),p_phone:f.get("phone")||null,p_pharmacy_name:f.get("pharmacy_name")||null,p_address:f.get("address")||null,p_gst_number:f.get("gst_number")||null,p_drug_license_number:f.get("drug_license_number")||null,p_active:f.get("active")==="true"});if(error){setSaving(false);notify(error.message);return}const salesGstMode=String(f.get("sales_gst_mode")||"price_plus_gst");await supabase!.from("organizations").update({sales_gst_mode:salesGstMode}).eq("id",editingClinic.id);const inputUsername=String(f.get("admin_username")||"").trim();const inputPassword=String(f.get("admin_password")||"").trim();const inputName=String(f.get("admin_name")||"").trim();const usernameChanged=inputUsername&&adminLogin?.username&&inputUsername.toLowerCase()!==String(adminLogin.username).toLowerCase();const nameChanged=inputName&&adminLogin?.full_name&&inputName!==String(adminLogin.full_name);const passwordEntered=inputPassword.length>0;if(inputUsername&&(usernameChanged||nameChanged||passwordEntered)){const admin=adminProfile?await supabase!.rpc("update_profile_login_json",{p_payload:{profile_id:adminProfile.id,username:inputUsername,password:inputPassword,full_name:inputName||adminProfile.full_name||"",role:"admin",active:true}}):adminInvite?await supabase!.rpc("update_invite_login_json",{p_payload:{invite_id:adminInvite.id,username:inputUsername,password:inputPassword,full_name:inputName||adminInvite.full_name||"",role:"admin",active:true}}):{error:{message:"No admin login record found for this clinic. Create the clinic admin from Users & Roles first."}};if(admin.error){setSaving(false);notify(admin.error.message);return}}setSaving(false);notify("Clinic details updated");setEditingClinic(null);orgs.reload();invites.reload();profiles.reload()};
+
+  const syncClinicLoginsActive=async(orgId:string,nextActive:boolean)=>{
+    const orgProfiles=profiles.rows.filter(p=>p.organization_id===orgId&&p.role!=="software_owner"&&p.username);
+    const orgInvites=invites.rows.filter(i=>i.organization_id===orgId&&i.role!=="software_owner"&&i.username);
+    await Promise.all([
+      ...orgProfiles.map(p=>supabase!.rpc("update_profile_login_json",{p_payload:{profile_id:p.id,username:p.username,password:"",full_name:p.full_name,role:p.role,active:nextActive}})),
+      ...orgInvites.map(i=>supabase!.rpc("update_invite_login_json",{p_payload:{invite_id:i.id,username:i.username,password:"",full_name:i.full_name,role:i.role,active:nextActive}})),
+    ]);
+  };
+
+  const openPauseModal=(org:Row)=>{
+    const cfg=parseClinicPaymentConfig(org,ownerDefaults);
+    setPauseModalClinic(org);
+    setPauseAmount(cfg.amount||ownerDefaults.default_amount||0);
+    setPauseUpiId(cfg.upi_id||ownerDefaults.upi_id);
+    setPausePayee(cfg.payee_name||ownerDefaults.payee_name);
+    setPauseNote(cfg.note||`${org.clinic_name} - Software Charges`);
+  };
+
+  const confirmPauseClinic=async()=>{
+    if(!supabase||!pauseModalClinic)return;
+    const org=pauseModalClinic;
+    setSaving(true);
+    setPausingId(org.id);
+    try{
+      const serializedName=serializeClinicNameWithPayment(org.clinic_name,org.id,{
+        amount:pauseAmount,
+        upi_id:pauseUpiId,
+        payee_name:pausePayee,
+        note:pauseNote,
+      });
+      const {error}=await supabase.rpc("update_clinic_details",{
+        p_organization_id:org.id,
+        p_clinic_name:org.clinic_name,
+        p_phone:org.phone||null,
+        p_pharmacy_name:org.pharmacy_name||null,
+        p_address:org.address||null,
+        p_gst_number:org.gst_number||null,
+        p_drug_license_number:org.drug_license_number||null,
+        p_active:false,
+      });
+      await supabase.from("organizations").update({active:false,name:serializedName}).eq("id",org.id);
+      await syncClinicLoginsActive(org.id,false);
+      notify(`${org.clinic_name} PAUSED. Logins are disabled and payment QR code is active.`);
+      setPauseModalClinic(null);
+      orgs.reload();invites.reload();profiles.reload();
+    }catch(err:any){
+      notify(err?.message||"Failed to pause clinic");
+    }finally{
+      setSaving(false);
+      setPausingId(null);
+    }
+  };
+
+  const releaseClinic=async(org:Row)=>{
+    if(!supabase)return;
+    setPausingId(org.id);
+    try{
+      const serializedName=serializeClinicNameWithPayment(org.clinic_name,org.id,{amount:0});
+      await supabase.from("organizations").update({active:true,name:serializedName}).eq("id",org.id);
+      await supabase.rpc("update_clinic_details",{
+        p_organization_id:org.id,
+        p_clinic_name:org.clinic_name,
+        p_phone:org.phone||null,
+        p_pharmacy_name:org.pharmacy_name||null,
+        p_address:org.address||null,
+        p_gst_number:org.gst_number||null,
+        p_drug_license_number:org.drug_license_number||null,
+        p_active:true,
+      });
+      await syncClinicLoginsActive(org.id,true);
+      notify(`${org.clinic_name} RELEASED! All logins for this clinic are now enabled.`);
+      orgs.reload();invites.reload();profiles.reload();
+    }catch(err:any){
+      notify(err?.message||"Failed to release clinic");
+    }finally{
+      setPausingId(null);
+    }
+  };
+
+  const saveClinicEdit=async(e:FormEvent<HTMLFormElement>)=>{
+    e.preventDefault();
+    if(!editingClinic)return;
+    const f=new FormData(e.currentTarget);
+    setSaving(true);
+    const nextActive=f.get("active")==="true";
+    const editAmount=Number(f.get("pending_amount")||0);
+    const editUpi=String(f.get("upi_id")||ownerDefaults.upi_id).trim();
+    const editPayee=String(f.get("payee_name")||ownerDefaults.payee_name).trim();
+    const editNote=String(f.get("payment_note")||`${editingClinic.clinic_name} - Software Charges`).trim();
+    const serializedName=serializeClinicNameWithPayment(String(f.get("clinic_name")),editingClinic.id,{
+      amount:editAmount,
+      upi_id:editUpi,
+      payee_name:editPayee,
+      note:editNote,
+    });
+    const {error}=await supabase!.rpc("update_clinic_details",{
+      p_organization_id:editingClinic.id,
+      p_clinic_name:f.get("clinic_name"),
+      p_phone:f.get("phone")||null,
+      p_pharmacy_name:f.get("pharmacy_name")||null,
+      p_address:f.get("address")||null,
+      p_gst_number:f.get("gst_number")||null,
+      p_drug_license_number:f.get("drug_license_number")||null,
+      p_active:nextActive,
+    });
+    if(error){setSaving(false);notify(error.message);return}
+    const salesGstMode=String(f.get("sales_gst_mode")||"price_plus_gst");
+    await supabase!.from("organizations").update({sales_gst_mode:salesGstMode,active:nextActive,name:serializedName}).eq("id",editingClinic.id);
+    if(Boolean(editingClinic.active)!==nextActive){
+      await syncClinicLoginsActive(editingClinic.id,nextActive);
+    }
+    const inputUsername=String(f.get("admin_username")||"").trim();
+    const inputPassword=String(f.get("admin_password")||"").trim();
+    const inputName=String(f.get("admin_name")||"").trim();
+    const usernameChanged=inputUsername&&adminLogin?.username&&inputUsername.toLowerCase()!==String(adminLogin.username).toLowerCase();
+    const nameChanged=inputName&&adminLogin?.full_name&&inputName!==String(adminLogin.full_name);
+    const passwordEntered=inputPassword.length>0;
+    if(inputUsername&&(usernameChanged||nameChanged||passwordEntered)){
+      const admin=adminProfile?await supabase!.rpc("update_profile_login_json",{p_payload:{profile_id:adminProfile.id,username:inputUsername,password:inputPassword,full_name:inputName||adminProfile.full_name||"",role:"admin",active:nextActive}}):adminInvite?await supabase!.rpc("update_invite_login_json",{p_payload:{invite_id:adminInvite.id,username:inputUsername,password:inputPassword,full_name:inputName||adminInvite.full_name||"",role:"admin",active:nextActive}}):{error:{message:"No admin login record found for this clinic. Create the clinic admin from Users & Roles first."}};
+      if(admin.error){setSaving(false);notify(admin.error.message);return}
+    }
+    setSaving(false);
+    notify("Clinic details updated");
+    setEditingClinic(null);
+    orgs.reload();invites.reload();profiles.reload();
+  };
+
+  const saveOwnerDefaults=async(e:FormEvent<HTMLFormElement>)=>{
+    e.preventDefault();
+    const f=new FormData(e.currentTarget);
+    const newDefaults:OwnerPaymentDefaults={
+      upi_id:String(f.get("default_upi_id")||"").trim(),
+      payee_name:String(f.get("default_payee_name")||"SivaCare Software").trim(),
+      default_amount:Number(f.get("default_amount")||0),
+    };
+    saveStoredOwnerPaymentDefaults(newDefaults);
+    setOwnerDefaults(newDefaults);
+    setOwnerSettingsOpen(false);
+    notify("Software Owner default payment settings updated");
+  };
+
   const startReset=(org:Row)=>{setResetClinic(org);setResetCounts({});setResetConfirm("");setResetMode("full")};
   const toggleResetGroup=(key:string)=>setResetSelected(x=>x.includes(key)?x.filter(v=>v!==key):[...x,key]);
   const resetPayload=()=>({organization_id:resetClinic?.id,reset_mode:resetMode,date_from:resetMode==="full"?null:resetFrom,date_to:resetMode==="full"?null:resetTo,groups:resetSelected});
@@ -584,7 +796,405 @@ export function ClinicManagementWorkflow({notify}:{notify:(s:string)=>void}){
   const downloadBackup=async()=>{if(!resetClinic)return false;const tables=await withEmbeddedPrescriptionFiles(await fetchBackupRows());const counts=Object.fromEntries(Object.entries(tables).map(([k,v])=>[k,v.length]));const html=buildClinicBackupHtml({clinic:resetClinic,mode:resetMode,from:resetMode==="full"?"":resetFrom,to:resetMode==="full"?"":resetTo,groups:allResetGroupKeys(),tables,counts});const blob=new Blob([html],{type:"text/html;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`${String(resetClinic.clinic_name||"clinic").replace(/[^a-z0-9]+/gi,"-").toLowerCase()}-full-backup-${new Date().toISOString().slice(0,10)}.html`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);return true};
   const removeSelectedPrescriptionFiles=async()=>{if(!resetSelected.includes("patient_history"))return;const rows=await fetchSelectedResetRows();const paths=Array.from(new Set((rows.prescription_attachments||[]).map(row=>String(row.storage_path||"")).filter(Boolean)));for(let i=0;i<paths.length;i+=100){const {error}=await supabase!.storage.from("prescriptions").remove(paths.slice(i,i+100));if(error)throw error}};
   const executeReset=async()=>{if(!resetClinic||!resetSelected.length)return;if(resetConfirm.trim().toLowerCase()!==String(resetClinic.clinic_name||"").trim().toLowerCase()&&resetConfirm.trim()!=="RESET"){notify("Type clinic name or RESET to confirm");return}setResetLoading(true);try{await downloadBackup();await removeSelectedPrescriptionFiles();const {data,error}=await supabase!.rpc("execute_clinic_reset_json",{p_payload:resetPayload()});if(error)throw error;notify(`Clinic reset completed. ${Number(data||0)} rows removed after HTML backup download.`);setResetClinic(null);orgs.reload();invites.reload();profiles.reload()}catch(err:any){notify(err?.message||"Reset failed")}finally{setResetLoading(false)}};
-  return <><PageHead title="Clinic Management" subtitle="Software owner area for creating and editing clinics"/><div className="admin-grid"><div className="panel form-panel"><h2 className="panel-title">Create clinic</h2><form onSubmit={save}><div className="form-grid"><Field name="clinic_name" label="Hospital / clinic name" required/><Field name="phone" label="Phone"/><label className="field"><span>Sales GST setting *</span><select name="sales_gst_mode" defaultValue="price_plus_gst"><option value="price_plus_gst">Price + GST (Sales rate includes GST)</option><option value="price_only">Price Only (GST extra on bill)</option></select></label><Field name="admin_name" label="Clinic admin name" required/><label className="field"><span>Admin username *</span><input name="admin_username" required onBlur={e=>checkUsername(e.currentTarget.value)}/><small>{usernameStatus}</small></label><Field name="admin_password" label="Admin password" type="password" required/></div><div className="form-actions"><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<Plus size={16}/>} Create clinic</button></div></form></div><div className="panel"><h2 className="panel-title">Recent clinics</h2>{orgs.error?<ErrorBox text={orgs.error}/>:orgs.loading?<LoadingPanel/>:orgs.rows.length?<div className="user-list">{orgs.rows.map(org=><div key={org.id} className="user-row clinic-row"><button type="button" className="clinic-row-main" onClick={()=>setEditingClinic(org)}><span><strong>{org.clinic_name}</strong><small>{org.phone||"No phone"} ┬╖ {org.active?"Active":"Inactive"}</small></span><Pencil size={14}/></button><button type="button" className="danger-mini" onClick={()=>startReset(org)}><Trash2 size={15}/> Reset</button></div>)}</div>:<Empty text="No clinics created yet."/>}</div></div><div className="panel admin-section"><h2 className="panel-title">Admin logins</h2>{invites.error?<ErrorBox text={invites.error}/>:invites.loading?<LoadingPanel/>:invites.rows.length?<DataTable columns={[["username","Username"],["full_name","Name"],["role","Role"],["active","Active"],["accepted_at","Accepted"]]} rows={invites.rows}/>:<Empty text="No login records found."/>}</div>{editingClinic&&<Modal title={`Edit clinic ${editingClinic.clinic_name}`} subtitle="Update clinic details and this clinic admin login" onClose={()=>setEditingClinic(null)}><form onSubmit={saveClinicEdit}><div className="form-grid"><Field name="clinic_name" label="Hospital / clinic name" required defaultValue={editingClinic.clinic_name}/><Field name="pharmacy_name" label="Pharmacy name" defaultValue={editingClinic.pharmacy_name}/><Field name="phone" label="Phone" defaultValue={editingClinic.phone}/><Field name="address" label="Address" defaultValue={editingClinic.address}/><Field name="gst_number" label="GST number" defaultValue={editingClinic.gst_number}/><Field name="drug_license_number" label="Drug license number" defaultValue={editingClinic.drug_license_number}/><label className="field"><span>Sales GST setting</span><select name="sales_gst_mode" defaultValue={editingClinic.sales_gst_mode||"price_plus_gst"}><option value="price_plus_gst">Price + GST (Sales rate includes GST)</option><option value="price_only">Price Only (GST extra on bill)</option></select></label><label className="field"><span>Status</span><select name="active" defaultValue={String(editingClinic.active)}><option value="true">Active</option><option value="false">Inactive</option></select></label></div><div className="section-label">ADMIN LOGIN</div><div className="form-grid"><Field name="admin_name" label="Admin name" defaultValue={adminLogin?.full_name}/><label className="field"><span>Admin username *</span><input name="admin_username" required defaultValue={adminLogin?.username||""}/></label><Field name="admin_password" label="New admin password (optional)" type="password"/></div><div className="form-actions"><button type="button" className="secondary" onClick={()=>setEditingClinic(null)}>Cancel</button><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Update clinic</button></div></form></Modal>}{resetClinic&&<Modal title={`Reset clinic ${resetClinic.clinic_name}`} subtitle="Select data to remove. Admin login remains active. HTML backup downloads before reset." onClose={()=>setResetClinic(null)}><div className="reset-box"><label className="field"><span>Reset mode</span><select value={resetMode} onChange={e=>setResetMode(e.currentTarget.value)}><option value="full">Full selected data reset</option><option value="financial_year">Financial year reset</option><option value="custom_range">Custom date range reset</option></select></label>{resetMode!=="full"&&<div className="form-grid"><label className="field"><span>From</span><input type="date" value={resetFrom} onChange={e=>setResetFrom(e.currentTarget.value)}/></label><label className="field"><span>To</span><input type="date" value={resetTo} onChange={e=>setResetTo(e.currentTarget.value)}/></label></div>}<div className="section-label">SELECT DATA TO REMOVE</div><div className="reset-check-grid">{resetGroups.map(g=><label key={g.key} className="permission-check reset-check"><input type="checkbox" checked={resetSelected.includes(g.key)} onChange={()=>toggleResetGroup(g.key)}/><span><strong>{g.label}</strong><small>{g.kind==="master"?"Master data":g.kind==="user"?"Users except admin":"Transaction data"}</small></span></label>)}</div><div className="form-actions"><button type="button" className="secondary" onClick={previewReset} disabled={resetLoading||!resetSelected.length}>{resetLoading?<LoaderCircle className="spin"/>:<Search size={16}/>} Preview</button><button type="button" className="secondary" onClick={downloadBackup} disabled={resetLoading||!resetSelected.length}><FileText size={16}/> Download HTML backup</button></div>{Object.keys(resetCounts).length>0&&<div className="reset-preview"><h3>Preview counts</h3><div className="summary-strip">{Object.entries(resetCounts).map(([table,count])=><Summary key={table} title={resetTableLabels[table]||table} value={String(count)} hint="Rows selected"/>)}</div></div>}<div className="error-box"><AlertTriangle/> Final reset deletes selected clinic data after backup download. Type clinic name or RESET below.</div><label className="field"><span>Confirmation</span><input value={resetConfirm} onChange={e=>setResetConfirm(e.currentTarget.value)} placeholder={`Type ${resetClinic.clinic_name} or RESET`}/></label><div className="form-actions"><button type="button" className="secondary" onClick={()=>setResetClinic(null)}>Cancel</button><button type="button" className="primary danger-action" onClick={executeReset} disabled={resetLoading||!resetSelected.length}>{resetLoading?<LoaderCircle className="spin"/>:<Trash2 size={16}/>} Backup and reset</button></div></div></Modal>}</>}
+
+  const clinicOrgs=orgs.rows.filter(o=>o.clinic_name!=="SivaCare Software Owner");
+  const adminInviteRows=invites.rows.filter(i=>i.role==="admin").map(i=>{const org=orgs.rows.find(o=>o.id===i.organization_id);const paused=org?.active===false||i.active===false;return {...i,clinic_name:org?.clinic_name||"—",login_status:paused?"Paused (Disabled)":"Active"}});
+
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>Clinic Management</h1>
+          <p style={{ margin: "4px 0 0 0", color: "#64748b", fontSize: "14px" }}>
+            Software owner console — create clinics, manage admin logins, and pause/release clinic access with payment QR code
+          </p>
+        </div>
+        <button
+          type="button"
+          className="secondary"
+          onClick={()=>setOwnerSettingsOpen(true)}
+          style={{ display: "inline-flex", alignItems: "center", gap: "8px", fontWeight: 700 }}
+        >
+          <CreditCard size={16} /> Owner Payment & QR Settings
+        </button>
+      </div>
+
+      <div className="admin-grid">
+        <div className="panel form-panel">
+          <h2 className="panel-title">Create clinic</h2>
+          <form onSubmit={save}>
+            <div className="form-grid">
+              <Field name="clinic_name" label="Hospital / clinic name" required/>
+              <Field name="phone" label="Phone"/>
+              <label className="field">
+                <span>Sales GST setting *</span>
+                <select name="sales_gst_mode" defaultValue="price_plus_gst">
+                  <option value="price_plus_gst">Price + GST (Sales rate includes GST)</option>
+                  <option value="price_only">Price Only (GST extra on bill)</option>
+                </select>
+              </label>
+              <Field name="initial_amount" label="Initial Software Charges (₹)" type="number" defaultValue={ownerDefaults.default_amount || 0}/>
+              <Field name="admin_name" label="Clinic admin name" required/>
+              <label className="field">
+                <span>Admin username *</span>
+                <input name="admin_username" required onBlur={e=>checkUsername(e.currentTarget.value)}/>
+                <small>{usernameStatus}</small>
+              </label>
+              <Field name="admin_password" label="Admin password" type="password" required/>
+            </div>
+            <div className="form-actions">
+              <button className="primary" disabled={saving}>
+                {saving ? <LoaderCircle className="spin"/> : <Plus size={16}/>} Create clinic
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div className="panel">
+          <h2 className="panel-title">Clinics</h2>
+          {orgs.error ? <ErrorBox text={orgs.error}/> : orgs.loading ? <LoadingPanel/> : clinicOrgs.length ? (
+            <div className="user-list">
+              {clinicOrgs.map(org => {
+                const isPaused = org.active === false;
+                const isBusy = pausingId === org.id;
+                const payCfg = parseClinicPaymentConfig(org, ownerDefaults);
+                return (
+                  <div key={org.id} className="user-row clinic-row" style={isPaused ? { borderColor: "#f59e0b", background: "#fffbeb" } : undefined}>
+                    <button
+                      type="button"
+                      className="clinic-row-main"
+                      onClick={() => {
+                        setEditingClinic(org);
+                        setEditPaymentConfig(parseClinicPaymentConfig(org, ownerDefaults));
+                      }}
+                    >
+                      <span>
+                        <strong>{org.clinic_name}</strong>
+                        <small>
+                          {org.phone || "No phone"} ·{" "}
+                          <b style={{ color: isPaused ? "#dc2626" : "#15803d" }}>
+                            {isPaused ? `PAUSED (Due: ₹${payCfg.amount})` : "Active"}
+                          </b>
+                        </small>
+                      </span>
+                      <Pencil size={14}/>
+                    </button>
+                    <div className="user-row-actions">
+                      {isPaused ? (
+                        <button
+                          type="button"
+                          className="table-edit"
+                          disabled={isBusy}
+                          onClick={() => releaseClinic(org)}
+                          style={{ background: "#dcfce7", borderColor: "#86efac", color: "#166534", fontWeight: 700 }}
+                          title="Release clinic and enable logins"
+                        >
+                          {isBusy ? <LoaderCircle size={15} className="spin"/> : <><Play size={15}/> Release</>}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="table-edit"
+                          disabled={isBusy}
+                          onClick={() => openPauseModal(org)}
+                          style={{ background: "#fef3c7", borderColor: "#fcd34d", color: "#92400e", fontWeight: 700 }}
+                          title="Pause clinic and disable logins with Payment QR code"
+                        >
+                          {isBusy ? <LoaderCircle size={15} className="spin"/> : <><Pause size={15}/> Pause</>}
+                        </button>
+                      )}
+                      <button type="button" className="danger-mini" onClick={() => startReset(org)}>
+                        <Trash2 size={15}/> Reset
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : <Empty text="No clinics created yet."/>}
+        </div>
+      </div>
+
+      <div className="panel admin-section">
+        <h2 className="panel-title">Clinic admin logins</h2>
+        {invites.error ? <ErrorBox text={invites.error}/> : invites.loading ? <LoadingPanel/> : adminInviteRows.length ? (
+          <DataTable columns={[["clinic_name","Clinic"],["username","Username"],["full_name","Admin name"],["login_status","Login status"],["accepted_at","Accepted"]]} rows={adminInviteRows}/>
+        ) : <Empty text="No login records found."/>}
+      </div>
+
+      {/* ─── Pause Clinic Modal ─── */}
+      {pauseModalClinic && (
+        <Modal
+          title={`Pause Clinic — ${pauseModalClinic.clinic_name}`}
+          subtitle="Disable all clinic logins and activate the payment QR code screen with prefilled charges"
+          onClose={() => setPauseModalClinic(null)}
+        >
+          <div style={{ display: "grid", gap: "16px" }}>
+            <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "10px", padding: "12px 14px", color: "#991b1b", fontSize: "13px", lineHeight: 1.5 }}>
+              <strong>Action:</strong> While paused, users from <strong>{pauseModalClinic.clinic_name}</strong> cannot access the clinic. The login screen will show the PAUSED state along with this payment QR code, prefilled amount, and notes.
+            </div>
+
+            <div className="form-grid">
+              <label className="field">
+                <span>Pending Software Charges (₹) <b>*</b></span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={pauseAmount}
+                  onChange={(e) => setPauseAmount(Number(e.target.value) || 0)}
+                  placeholder="Enter pending charges in INR"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Software Owner Payee Name <b>*</b></span>
+                <input
+                  type="text"
+                  value={pausePayee}
+                  onChange={(e) => setPausePayee(e.target.value)}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Software Owner UPI ID <b>*</b></span>
+                <input
+                  type="text"
+                  value={pauseUpiId}
+                  onChange={(e) => setPauseUpiId(e.target.value)}
+                  placeholder="e.g. vasavinexus@upi"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Payment Note in QR (Prefilled)</span>
+                <input
+                  type="text"
+                  value={pauseNote}
+                  onChange={(e) => setPauseNote(e.target.value)}
+                />
+              </label>
+            </div>
+
+            {/* Live QR Preview Box */}
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "14px", textAlign: "center" }}>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: "8px" }}>
+                Live Login QR Code Preview
+              </div>
+              <UpiQrCodeSvg
+                value={buildUpiPaymentUri({
+                  upi_id: pauseUpiId,
+                  payee_name: pausePayee,
+                  amount: pauseAmount,
+                  note: pauseNote,
+                })}
+                size={160}
+              />
+              <div style={{ fontSize: "13px", color: "#0f172a", marginTop: "8px", fontWeight: 700 }}>
+                Amount: ₹{pauseAmount} · Payee: {pausePayee}
+              </div>
+              <div style={{ fontSize: "12px", color: "#64748b" }}>
+                Note: {pauseNote}
+              </div>
+            </div>
+
+            <div className="form-actions">
+              <button type="button" className="secondary" onClick={() => setPauseModalClinic(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary danger-action"
+                disabled={saving || !pauseUpiId}
+                onClick={confirmPauseClinic}
+                style={{ background: "#b91c1c", borderColor: "#991b1b" }}
+              >
+                {saving ? <LoaderCircle className="spin" size={16}/> : <Pause size={16}/>}
+                Confirm & Pause Clinic
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ─── Software Owner Payment Settings Modal ─── */}
+      {ownerSettingsOpen && (
+        <Modal
+          title="Default Software Owner Payment Settings"
+          subtitle="Configure default UPI ID, payee name, and billing amount applied to paused clinics"
+          onClose={() => setOwnerSettingsOpen(false)}
+        >
+          <form onSubmit={saveOwnerDefaults}>
+            <div className="form-grid">
+              <Field name="default_upi_id" label="Software Owner UPI ID" required defaultValue={ownerDefaults.upi_id}/>
+              <Field name="default_payee_name" label="Software Owner Payee Name" required defaultValue={ownerDefaults.payee_name}/>
+              <Field name="default_amount" label="Default Software Charges (₹)" type="number" defaultValue={ownerDefaults.default_amount}/>
+            </div>
+            <div className="form-actions">
+              <button type="button" className="secondary" onClick={() => setOwnerSettingsOpen(false)}>Cancel</button>
+              <button className="primary"><CheckCircle2 size={16}/> Save Settings</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ─── Edit Clinic Modal ─── */}
+      {editingClinic && (
+        <Modal
+          title={`Edit clinic ${editingClinic.clinic_name}`}
+          subtitle="Update clinic details, pause/release status, and software charges payment QR"
+          onClose={() => { setEditingClinic(null); setEditPaymentConfig(null); }}
+        >
+          <form onSubmit={saveClinicEdit}>
+            <div className="form-grid">
+              <Field name="clinic_name" label="Hospital / clinic name" required defaultValue={editingClinic.clinic_name}/>
+              <Field name="pharmacy_name" label="Pharmacy name" defaultValue={editingClinic.pharmacy_name}/>
+              <Field name="phone" label="Phone" defaultValue={editingClinic.phone}/>
+              <Field name="address" label="Address" defaultValue={editingClinic.address}/>
+              <Field name="gst_number" label="GST number" defaultValue={editingClinic.gst_number}/>
+              <Field name="drug_license_number" label="Drug license number" defaultValue={editingClinic.drug_license_number}/>
+              <label className="field">
+                <span>Sales GST setting</span>
+                <select name="sales_gst_mode" defaultValue={editingClinic.sales_gst_mode||"price_plus_gst"}>
+                  <option value="price_plus_gst">Price + GST (Sales rate includes GST)</option>
+                  <option value="price_only">Price Only (GST extra on bill)</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>Login Status</span>
+                <select name="active" defaultValue={String(editingClinic.active!==false)}>
+                  <option value="true">Active (Logins Enabled)</option>
+                  <option value="false">Paused (Logins Disabled)</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="section-label">SOFTWARE CHARGES & PAYMENT QR CODE</div>
+            <div className="form-grid">
+              <Field
+                name="pending_amount"
+                label="Pending Software Charges (₹)"
+                type="number"
+                defaultValue={editPaymentConfig?.amount ?? ownerDefaults.default_amount}
+              />
+              <Field
+                name="payee_name"
+                label="Payee Name"
+                defaultValue={editPaymentConfig?.payee_name || ownerDefaults.payee_name}
+              />
+              <Field
+                name="upi_id"
+                label="UPI ID"
+                defaultValue={editPaymentConfig?.upi_id || ownerDefaults.upi_id}
+              />
+              <Field
+                name="payment_note"
+                label="Payment Note in QR"
+                defaultValue={editPaymentConfig?.note || `${editingClinic.clinic_name} - Software Charges`}
+              />
+            </div>
+
+            <div className="section-label">ADMIN LOGIN</div>
+            <div className="form-grid">
+              <Field name="admin_name" label="Admin name" defaultValue={adminLogin?.full_name}/>
+              <label className="field">
+                <span>Admin username *</span>
+                <input name="admin_username" required defaultValue={adminLogin?.username||""}/>
+              </label>
+              <Field name="admin_password" label="New admin password (optional)" type="password"/>
+            </div>
+
+            <div className="form-actions">
+              <button type="button" className="secondary" onClick={() => { setEditingClinic(null); setEditPaymentConfig(null); }}>
+                Cancel
+              </button>
+              <button className="primary" disabled={saving}>
+                {saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Update clinic
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ─── Reset Clinic Modal ─── */}
+      {resetClinic && (
+        <Modal
+          title={`Reset clinic ${resetClinic.clinic_name}`}
+          subtitle="Select data to remove. Admin login remains active. HTML backup downloads before reset."
+          onClose={() => setResetClinic(null)}
+        >
+          <div className="reset-box">
+            <label className="field">
+              <span>Reset mode</span>
+              <select value={resetMode} onChange={e=>setResetMode(e.currentTarget.value)}>
+                <option value="full">Full selected data reset</option>
+                <option value="financial_year">Financial year reset</option>
+                <option value="custom_range">Custom date range reset</option>
+              </select>
+            </label>
+            {resetMode!=="full" && (
+              <div className="form-grid">
+                <label className="field">
+                  <span>From</span>
+                  <input type="date" value={resetFrom} onChange={e=>setResetFrom(e.currentTarget.value)}/>
+                </label>
+                <label className="field">
+                  <span>To</span>
+                  <input type="date" value={resetTo} onChange={e=>setResetTo(e.currentTarget.value)}/>
+                </label>
+              </div>
+            )}
+            <div className="section-label">SELECT DATA TO REMOVE</div>
+            <div className="reset-check-grid">
+              {resetGroups.map(g => (
+                <label key={g.key} className="permission-check reset-check">
+                  <input type="checkbox" checked={resetSelected.includes(g.key)} onChange={() => toggleResetGroup(g.key)}/>
+                  <span>
+                    <strong>{g.label}</strong>
+                    <small>{g.kind==="master"?"Master data":g.kind==="user"?"Users except admin":"Transaction data"}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="form-actions">
+              <button type="button" className="secondary" onClick={previewReset} disabled={resetLoading||!resetSelected.length}>
+                {resetLoading ? <LoaderCircle className="spin"/> : <Search size={16}/>} Preview
+              </button>
+              <button type="button" className="secondary" onClick={downloadBackup} disabled={resetLoading||!resetSelected.length}>
+                <FileText size={16}/> Download HTML backup
+              </button>
+            </div>
+            {Object.keys(resetCounts).length > 0 && (
+              <div className="reset-preview">
+                <h3>Preview counts</h3>
+                <div className="summary-strip">
+                  {Object.entries(resetCounts).map(([table,count]) => (
+                    <Summary key={table} title={resetTableLabels[table]||table} value={String(count)} hint="Rows selected"/>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="error-box">
+              <AlertTriangle/> Final reset deletes selected clinic data after backup download. Type clinic name or RESET below.
+            </div>
+            <label className="field">
+              <span>Confirmation</span>
+              <input value={resetConfirm} onChange={e=>setResetConfirm(e.currentTarget.value)} placeholder={`Type ${resetClinic.clinic_name} or RESET`}/>
+            </label>
+            <div className="form-actions">
+              <button type="button" className="secondary" onClick={() => setResetClinic(null)}>
+                Cancel
+              </button>
+              <button type="button" className="primary danger-action" onClick={executeReset} disabled={resetLoading||!resetSelected.length}>
+                {resetLoading ? <LoaderCircle className="spin"/> : <Trash2 size={16}/>} Backup and reset
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
 
 function UsersPage({profile,notify}:{profile:Profile;notify:(s:string)=>void}){
   const users=useRows("profiles","id,username,full_name,role,mobile,active,created_at");
@@ -593,7 +1203,7 @@ function UsersPage({profile,notify}:{profile:Profile;notify:(s:string)=>void}){
   // Only show unlinked doctor records in the dropdown (profile_id IS NULL means not yet assigned to any login)
   const unlinkeddoctors=doctors.rows.filter(d=>!d.profile_id);
   const [selected,setSelected]=useState<Row|null>(null),[checked,setChecked]=useState<string[]>([]),[saving,setSaving]=useState(false),[usernameStatus,setUsernameStatus]=useState(""),[editingUser,setEditingUser]=useState<Row|null>(null),[editingInvite,setEditingInvite]=useState<Row|null>(null),[confirmDelete,setConfirmDelete]=useState<{type:"user"|"invite";row:Row}|null>(null);
-  useEffect(()=>{if(!selected||!supabase){setChecked([]);return}supabase.from("page_permissions").select("page_key").eq("profile_id",selected.id).then(({data})=>setChecked(data?.map(x=>x.page_key)||rolePages[selected.role]||["Dashboard"]))},[selected]);
+  useEffect(()=>{if(!selected||!supabase){setChecked([]);return}supabase.from("page_permissions").select("page_key").eq("profile_id",selected.id).then(({data})=>setChecked((data?.map(x=>x.page_key)||rolePages[selected.role]||["Dashboard"]).filter((p:string)=>p!=="Clinic Management")))},[selected]);
   const checkUsername=async(username:string,current?:{profileId?:string;inviteId?:string})=>{if(!username.trim()){setUsernameStatus("");return}const {data,error}=await supabase!.rpc("username_available_for_user",{p_username:username,p_profile_id:current?.profileId||null,p_invite_id:current?.inviteId||null});setUsernameStatus(error?error.message:data?"Username available":"Username already used")};
   const createLogin=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const form=e.currentTarget;const f=new FormData(form);setSaving(true);const role=String(f.get("role"));const doctorId=String(f.get("doctor_id")||"");const available=await supabase!.rpc("username_available",{p_username:f.get("username")});if(available.error||!available.data){setSaving(false);notify(available.error?.message||"Username already used");return}const {error}=await supabase!.rpc("upsert_user_invite_username",{p_username:f.get("username"),p_password:f.get("password"),p_full_name:f.get("full_name"),p_role:role,p_doctor_id:doctorId||null});setSaving(false);if(error){notify(error.message);return}notify(`Login saved. User can sign in with username ${f.get("username")}.`);form.reset();setUsernameStatus("");invites.reload()};
   const saveUserEdit=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();if(!editingUser)return;const f=new FormData(e.currentTarget);setSaving(true);const {error}=await supabase!.rpc("update_profile_login_json",{p_payload:{profile_id:editingUser.id,username:f.get("username"),password:String(f.get("password")||""),full_name:String(f.get("full_name")||""),role:String(f.get("role")),active:f.get("active")==="true"}});setSaving(false);if(error){notify(error.message);return}notify("User login updated");setEditingUser(null);setUsernameStatus("");users.reload();invites.reload()};
@@ -602,24 +1212,24 @@ function UsersPage({profile,notify}:{profile:Profile;notify:(s:string)=>void}){
   const savePermissions=async()=>{if(!selected)return;setSaving(true);const {error}=await supabase!.rpc("set_page_permissions",{p_profile_id:selected.id,p_pages:checked});setSaving(false);notify(error?.message||"Page permissions updated")};
   const deleteUser=async(user:Row)=>{setSaving(true);await supabase!.from("page_permissions").delete().eq("profile_id",user.id);if(user.username)await supabase!.from("user_invites").delete().eq("username",user.username);await supabase!.from("user_invites").delete().eq("accepted_by",user.id);const docs=await supabase!.from("doctors").select("id").eq("profile_id",user.id);if(docs.data?.length){for(const doc of docs.data){const {count}=await supabase!.from("consultations").select("id",{count:"exact",head:true}).eq("doctor_id",doc.id);if(!count){await supabase!.from("doctors").delete().eq("id",doc.id)}else{await supabase!.from("doctors").update({profile_id:null}).eq("id",doc.id)}}}const {error}=await supabase!.from("profiles").delete().eq("id",user.id);setSaving(false);if(error){notify(error.message);return}if(selected?.id===user.id)setSelected(null);notify(`User ${user.full_name} deleted`);users.reload();invites.reload();doctors.reload();setConfirmDelete(null)};
   const deleteInvite=async(invite:Row)=>{setSaving(true);if(invite.accepted_by){await supabase!.from("page_permissions").delete().eq("profile_id",invite.accepted_by);const docs=await supabase!.from("doctors").select("id").eq("profile_id",invite.accepted_by);if(docs.data?.length){for(const doc of docs.data){const {count}=await supabase!.from("consultations").select("id",{count:"exact",head:true}).eq("doctor_id",doc.id);if(!count){await supabase!.from("doctors").delete().eq("id",doc.id)}else{await supabase!.from("doctors").update({profile_id:null}).eq("id",doc.id)}}}await supabase!.from("profiles").delete().eq("id",invite.accepted_by)}if(invite.username){await supabase!.from("profiles").delete().eq("username",invite.username)}const {error}=await supabase!.from("user_invites").delete().eq("id",invite.id);setSaving(false);if(error){notify(error.message);return}notify(`Login record for ${invite.full_name} deleted`);users.reload();invites.reload();doctors.reload();setConfirmDelete(null)};
-  if(profile.role!=="admin"&&profile.role!=="software_owner")return <><PageHead title="Users & Roles" subtitle="Only clinic admins can manage logins and page permissions"/><ErrorBox text="Admin access is required for this page."/></>;
-  return <><PageHead title="Users & Roles" subtitle="Create, edit and manage clinic username/password logins"/><div className="admin-grid"><div className="panel form-panel"><h2 className="panel-title">Create login access</h2><div className="auth-message login-help">Create a user login. Link a doctor profile only for doctor logins.</div><form onSubmit={createLogin} autoComplete="off"><div className="form-grid"><Field name="full_name" label="Full name" required/><label className="field"><span>Username *</span><input name="username" required autoComplete="off" inputMode="text" spellCheck={false} onBlur={e=>checkUsername(e.currentTarget.value)}/><small>{usernameStatus}</small></label><label className="field"><span>Password <b> *</b></span><input name="password" type="password" required autoComplete="new-password"/></label><label className="field"><span>Role *</span><select name="role" required defaultValue="doctor">{roleOptions.map(r=><option key={r} value={r}>{r.replace("_"," ")}</option>)}</select></label><label className="field"><span>Link doctor profile</span><select name="doctor_id"><option value="">Not a doctor login</option>{unlinkeddoctors.map(d=><option key={d.id} value={d.id}>{d.doctor_id} - {d.name}</option>)}</select></label></div><div className="form-actions"><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<UserRoundPlus size={16}/>} Save login access</button></div></form></div><div className="panel"><h2 className="panel-title">Active users</h2>{users.error?<ErrorBox text={users.error}/>:users.loading?<LoadingPanel/>:users.rows.length?<div className="user-list">{users.rows.map(user=><div key={user.id} className={`user-row ${selected?.id===user.id?"selected":""}`} onClick={()=>setSelected(user)}><span><strong>{user.full_name}</strong><small>{user.username||"needs username"} ┬╖ {user.role.replace("_"," ")} ┬╖ {user.active?"Active":"Inactive"}</small></span><div className="user-row-actions" onClick={e=>e.stopPropagation()}><button type="button" className="table-edit" onClick={()=>{setEditingUser(user);setUsernameStatus("")}}><Pencil size={14}/> Edit</button><button type="button" className="table-edit danger-btn" onClick={()=>setConfirmDelete({type:"user",row:user})}><Trash2 size={14}/> Delete</button></div></div>)}</div>:<Empty text="No users found."/>}</div></div>{selected&&<div className="panel admin-section"><div className="permission-head"><div><h2 className="panel-title">Page access for {selected.full_name}</h2><p>Select only the pages this login should see in the sidebar.</p></div><button className="primary" onClick={savePermissions} disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Save permissions</button></div><div className="permission-grid">{allPageLabels.map(page=><label key={page} className="permission-check"><input type="checkbox" checked={checked.includes(page)} onChange={()=>toggle(page)}/><span>{page}</span></label>)}</div></div>}<div className="panel admin-section"><h2 className="panel-title">Login access records</h2><div className="auth-message login-help">Waiting first login means the user is saved and can sign in, but has not opened the app yet.</div>{invites.error?<ErrorBox text={invites.error}/>:invites.loading?<LoadingPanel/>:invites.rows.length?<div className="user-list">{invites.rows.map(invite=><div key={invite.id} className="user-row"><span onClick={()=>{setEditingInvite(invite);setUsernameStatus("")}}><strong>{invite.full_name}</strong><small>{invite.username||"needs username"} ┬╖ {invite.role.replace("_"," ")} ┬╖ {invite.active?"Active":"Inactive"} ┬╖ {invite.accepted_at?"Accepted":"Waiting first login"}</small></span><div className="user-row-actions"><button type="button" className="table-edit" onClick={()=>{setEditingInvite(invite);setUsernameStatus("")}}><Pencil size={14}/> Edit</button><button type="button" className="table-edit danger-btn" onClick={()=>setConfirmDelete({type:"invite",row:invite})}><Trash2 size={14}/> Delete</button></div></div>)}</div>:<Empty text="No login access records found."/>}</div>{editingUser&&<Modal title={`Edit user ${editingUser.full_name}`} subtitle="Assign or change username/password for an existing active user" onClose={()=>setEditingUser(null)}><form onSubmit={saveUserEdit}><div className="form-grid"><Field name="full_name" label="Full name" required defaultValue={editingUser.full_name}/><label className="field"><span>Username *</span><input name="username" required defaultValue={editingUser.username||""} onBlur={e=>checkUsername(e.currentTarget.value,{profileId:editingUser.id})}/><small>{usernameStatus}</small></label><Field name="password" label="New password (optional)" type="password"/><label className="field"><span>Role *</span><select name="role" required defaultValue={editingUser.role}>{roleOptions.map(r=><option key={r} value={r}>{r.replace("_"," ")}</option>)}</select></label><label className="field"><span>Status</span><select name="active" defaultValue={String(editingUser.active)}><option value="true">Active</option><option value="false">Inactive</option></select></label></div><div className="form-actions"><button type="button" className="secondary" onClick={()=>setEditingUser(null)}>Cancel</button><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Update user</button></div></form></Modal>}{editingInvite&&<Modal title={`Edit login ${editingInvite.full_name}`} subtitle="Edit saved login record. Password is changed only when entered." onClose={()=>setEditingInvite(null)}><form onSubmit={saveInviteEdit}><div className="form-grid"><Field name="full_name" label="Full name" required defaultValue={editingInvite.full_name}/><label className="field"><span>Username *</span><input name="username" required defaultValue={editingInvite.username||""} onBlur={e=>checkUsername(e.currentTarget.value,{inviteId:editingInvite.id})}/><small>{usernameStatus}</small></label><Field name="password" label="New password (optional)" type="password"/><label className="field"><span>Role *</span><select name="role" required defaultValue={editingInvite.role}>{roleOptions.map(r=><option key={r} value={r}>{r.replace("_"," ")}</option>)}</select></label><label className="field"><span>Status</span><select name="active" defaultValue={String(editingInvite.active)}><option value="true">Active</option><option value="false">Inactive</option></select></label></div><div className="form-actions"><button type="button" className="secondary" onClick={()=>setEditingInvite(null)}>Cancel</button><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Update login</button></div></form></Modal>}{confirmDelete&&<Modal title="Confirm Delete" subtitle={`Are you sure you want to delete ${confirmDelete.row.full_name}? This cannot be undone.`} onClose={()=>setConfirmDelete(null)}><div className="form-actions" style={{marginTop:"1rem"}}><button type="button" className="secondary" onClick={()=>setConfirmDelete(null)}>Cancel</button><button type="button" className="primary" style={{background:"var(--danger,#e53e3e)"}} disabled={saving} onClick={()=>confirmDelete.type==="user"?deleteUser(confirmDelete.row):deleteInvite(confirmDelete.row)}>{saving?<LoaderCircle className="spin"/>:<Trash2 size={16}/>} Yes, Delete</button></div></Modal>}</>
+  if(profile.role!=="admin")return <><PageHead title="Users & Roles" subtitle="Only clinic admins can manage logins and page permissions"/><ErrorBox text="Clinic admin access is required for this page."/></>;
+  return <><PageHead title="Users & Roles" subtitle="Create, edit and manage clinic username/password logins"/><div className="admin-grid"><div className="panel form-panel"><h2 className="panel-title">Create login access</h2><div className="auth-message login-help">Create a user login. Link a doctor profile only for doctor logins.</div><form onSubmit={createLogin} autoComplete="off"><div className="form-grid"><Field name="full_name" label="Full name" required/><label className="field"><span>Username *</span><input name="username" required autoComplete="off" inputMode="text" spellCheck={false} onBlur={e=>checkUsername(e.currentTarget.value)}/><small>{usernameStatus}</small></label><label className="field"><span>Password <b> *</b></span><input name="password" type="password" required autoComplete="new-password"/></label><label className="field"><span>Role *</span><select name="role" required defaultValue="doctor">{roleOptions.map(r=><option key={r} value={r}>{r.replace("_"," ")}</option>)}</select></label><label className="field"><span>Link doctor profile</span><select name="doctor_id"><option value="">Not a doctor login</option>{unlinkeddoctors.map(d=><option key={d.id} value={d.id}>{d.doctor_id} - {d.name}</option>)}</select></label></div><div className="form-actions"><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<UserRoundPlus size={16}/>} Save login access</button></div></form></div><div className="panel"><h2 className="panel-title">Active users</h2>{users.error?<ErrorBox text={users.error}/>:users.loading?<LoadingPanel/>:users.rows.length?<div className="user-list">{users.rows.map(user=><div key={user.id} className={`user-row ${selected?.id===user.id?"selected":""}`} onClick={()=>setSelected(user)}><span><strong>{user.full_name}</strong><small>{user.username||"needs username"} · {user.role.replace("_"," ")} · {user.active?"Active":"Inactive"}</small></span><div className="user-row-actions" onClick={e=>e.stopPropagation()}><button type="button" className="table-edit" onClick={()=>{setEditingUser(user);setUsernameStatus("")}}><Pencil size={14}/> Edit</button><button type="button" className="table-edit danger-btn" onClick={()=>setConfirmDelete({type:"user",row:user})}><Trash2 size={14}/> Delete</button></div></div>)}</div>:<Empty text="No users found."/>}</div></div>{selected&&<div className="panel admin-section"><div className="permission-head"><div><h2 className="panel-title">Page access for {selected.full_name}</h2><p>Select only the pages this login should see in the sidebar.</p></div><button className="primary" onClick={savePermissions} disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Save permissions</button></div><div className="permission-grid">{allPageLabels.map(page=><label key={page} className="permission-check"><input type="checkbox" checked={checked.includes(page)} onChange={()=>toggle(page)}/><span>{page}</span></label>)}</div></div>}<div className="panel admin-section"><h2 className="panel-title">Login access records</h2><div className="auth-message login-help">Waiting first login means the user is saved and can sign in, but has not opened the app yet.</div>{invites.error?<ErrorBox text={invites.error}/>:invites.loading?<LoadingPanel/>:invites.rows.length?<div className="user-list">{invites.rows.map(invite=><div key={invite.id} className="user-row"><span onClick={()=>{setEditingInvite(invite);setUsernameStatus("")}}><strong>{invite.full_name}</strong><small>{invite.username||"needs username"} · {invite.role.replace("_"," ")} · {invite.active?"Active":"Inactive"} · {invite.accepted_at?"Accepted":"Waiting first login"}</small></span><div className="user-row-actions"><button type="button" className="table-edit" onClick={()=>{setEditingInvite(invite);setUsernameStatus("")}}><Pencil size={14}/> Edit</button><button type="button" className="table-edit danger-btn" onClick={()=>setConfirmDelete({type:"invite",row:invite})}><Trash2 size={14}/> Delete</button></div></div>)}</div>:<Empty text="No login access records found."/>}</div>{editingUser&&<Modal title={`Edit user ${editingUser.full_name}`} subtitle="Assign or change username/password for an existing active user" onClose={()=>setEditingUser(null)}><form onSubmit={saveUserEdit}><div className="form-grid"><Field name="full_name" label="Full name" required defaultValue={editingUser.full_name}/><label className="field"><span>Username *</span><input name="username" required defaultValue={editingUser.username||""} onBlur={e=>checkUsername(e.currentTarget.value,{profileId:editingUser.id})}/><small>{usernameStatus}</small></label><Field name="password" label="New password (optional)" type="password"/><label className="field"><span>Role *</span><select name="role" required defaultValue={editingUser.role}>{roleOptions.map(r=><option key={r} value={r}>{r.replace("_"," ")}</option>)}</select></label><label className="field"><span>Status</span><select name="active" defaultValue={String(editingUser.active)}><option value="true">Active</option><option value="false">Inactive</option></select></label></div><div className="form-actions"><button type="button" className="secondary" onClick={()=>setEditingUser(null)}>Cancel</button><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Update user</button></div></form></Modal>}{editingInvite&&<Modal title={`Edit login ${editingInvite.full_name}`} subtitle="Edit saved login record. Password is changed only when entered." onClose={()=>setEditingInvite(null)}><form onSubmit={saveInviteEdit}><div className="form-grid"><Field name="full_name" label="Full name" required defaultValue={editingInvite.full_name}/><label className="field"><span>Username *</span><input name="username" required defaultValue={editingInvite.username||""} onBlur={e=>checkUsername(e.currentTarget.value,{inviteId:editingInvite.id})}/><small>{usernameStatus}</small></label><Field name="password" label="New password (optional)" type="password"/><label className="field"><span>Role *</span><select name="role" required defaultValue={editingInvite.role}>{roleOptions.map(r=><option key={r} value={r}>{r.replace("_"," ")}</option>)}</select></label><label className="field"><span>Status</span><select name="active" defaultValue={String(editingInvite.active)}><option value="true">Active</option><option value="false">Inactive</option></select></label></div><div className="form-actions"><button type="button" className="secondary" onClick={()=>setEditingInvite(null)}>Cancel</button><button className="primary" disabled={saving}>{saving?<LoaderCircle className="spin"/>:<CheckCircle2 size={16}/>} Update login</button></div></form></Modal>}{confirmDelete&&<Modal title="Confirm Delete" subtitle={`Are you sure you want to delete ${confirmDelete.row.full_name}? This cannot be undone.`} onClose={()=>setConfirmDelete(null)}><div className="form-actions" style={{marginTop:"1rem"}}><button type="button" className="secondary" onClick={()=>setConfirmDelete(null)}>Cancel</button><button type="button" className="primary" style={{background:"var(--danger,#e53e3e)"}} disabled={saving} onClick={()=>confirmDelete.type==="user"?deleteUser(confirmDelete.row):deleteInvite(confirmDelete.row)}>{saving?<LoaderCircle className="spin"/>:<Trash2 size={16}/>} Yes, Delete</button></div></Modal>}</>
 }
 
 function ReportPage({title}:{title:string}){const maps:Record<string,[string,Array<[string,string]>]>={Reports:["sales",[["invoice_no","Invoice"],["sold_at","Date"],["pharmacy_revenue","Pharmacy revenue"],["doctor_fee","Consultation revenue"],["grand_total","Collection"]]],Settings:["organizations",[["clinic_name","Clinic"],["pharmacy_name","Pharmacy"],["phone","Phone"],["gst_number","GST"],["currency","Currency"]]]};const m=maps[title]||["notifications",[["created_at","Date"],["kind","Type"],["title","Notification"],["read_at","Read"]]];const x=useRows(m[0] as string,"*");return <List title={title} subtitle="Live Supabase records" state={x} cols={m[1] as Array<[string,string]>}/>}
 
 function Field({name,label,type="text",required,textarea,defaultValue}:{name:string;label:string;type?:string;required?:boolean;textarea?:boolean;defaultValue?:string|number|null}){const isRequired=required&&name!=="symptoms";return <label className="field"><span>{label}{isRequired&&<b> *</b>}</span>{textarea?<textarea name={name} required={isRequired} defaultValue={defaultValue??""}/>:<input name={name} type={type} required={isRequired} defaultValue={defaultValue??""} step={type==="number"?"0.01":undefined}/>}</label>}
 function SelectField({name,label,rows,text,value,onChange,empty}:{name:string;label:string;rows:Row[];text:(r:Row)=>string;value?:string;onChange?:(s:string)=>void;empty?:string}){
-  const [internal,setInternal]=useState(value||""),[query,setQuery]=useState(""),[open,setOpen]=useState(false);
+  const [internal,setInternal]=useState(value||""),[query,setQuery]=useState(""),[open,setOpen]=useState(false),[activeIndex,setActiveIndex]=useState(-1);
   const selectedValue=value!==undefined?value:internal;
   const selected=rows.find(r=>r.id===selectedValue);
   const display=selected?text(selected):"";
   const shown=query||display;
-  const matches=rows.filter(r=>text(r).toLowerCase().includes(shown.trim().toLowerCase())).slice(0,30);
+  const matches=rows.filter(r=>!query||selectedValue||text(r).toLowerCase().includes(shown.trim().toLowerCase())).slice(0,30);
   const choose=(row:Row|null,moveNext=false)=>{const next=row?.id||"";if(value===undefined)setInternal(next);onChange?.(next);setQuery(row?text(row):"");setOpen(false);if(moveNext)setTimeout(()=>{const input=document.activeElement as HTMLElement|null;if(input)focusNextFormField(input)},0)};
   useEffect(()=>{if(value!==undefined){setInternal(value||"");if(!value)setQuery("")}},[value]);
   useEffect(()=>{if(selected)setQuery(text(selected));else if(!selectedValue)setQuery("")},[selectedValue,rows.length]);
-  return <label className="field"><span>{label}</span><div className="patient-combobox searchable-select"><input type="hidden" name={name} value={selectedValue}/><div className="search-box patient-history-search"><Search size={15}/><input value={shown} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),160)} onKeyDown={e=>{if(e.key==="Enter"){if(!open){e.preventDefault();setOpen(true);return}if(matches.length>0){e.preventDefault();choose(matches.find(r=>r.id===selectedValue)||matches[0],true)}}}} onChange={e=>{setQuery(e.currentTarget.value);if(selectedValue){if(value===undefined)setInternal("");onChange?.("")}setOpen(true)}} placeholder={empty||"Search and select"} autoComplete="off" role="combobox" aria-expanded={open}/></div>{open&&<div className="patient-listbox" role="listbox">{empty&&<button type="button" role="option" aria-selected={!selectedValue} key="empty-option" onMouseDown={e=>e.preventDefault()} onClick={()=>choose(null)}><strong>{empty}</strong><span>Clear selection</span></button>}{matches.length?matches.map(row=><button type="button" role="option" aria-selected={row.id===selectedValue} key={row.id} onMouseDown={e=>e.preventDefault()} onClick={()=>choose(row)}><strong>{text(row)}</strong></button>):<div className="patient-list-empty">No matching record found</div>}</div>}</div></label>
+  return <label className="field"><span>{label}</span><div className="patient-combobox searchable-select"><input type="hidden" name={name} value={selectedValue}/><div className="search-box patient-history-search"><Search size={15}/><input value={shown} onFocus={()=>setOpen(true)} onBlur={()=>setTimeout(()=>setOpen(false),160)} onKeyDown={e=>{if(e.key==="ArrowDown"){e.preventDefault();setOpen(true);if(matches.length){const nextIdx=activeIndex<matches.length-1?activeIndex+1:0;setActiveIndex(nextIdx);const chosen=matches[nextIdx];if(value===undefined)setInternal(chosen.id);onChange?.(chosen.id);setQuery(text(chosen))}}else if(e.key==="ArrowUp"){e.preventDefault();setOpen(true);if(matches.length){const prevIdx=activeIndex>0?activeIndex-1:matches.length-1;setActiveIndex(prevIdx);const chosen=matches[prevIdx];if(value===undefined)setInternal(chosen.id);onChange?.(chosen.id);setQuery(text(chosen))}}else if(e.key==="Enter"){if(!open){e.preventDefault();setOpen(true);return}if(matches.length>0){e.preventDefault();choose(matches[activeIndex>=0?activeIndex:0]||matches.find(r=>r.id===selectedValue)||matches[0],true)}}}} onChange={e=>{setActiveIndex(-1);setQuery(e.currentTarget.value);if(selectedValue){if(value===undefined)setInternal("");onChange?.("")}setOpen(true)}} placeholder={empty||"Search and select"} autoComplete="off" role="combobox" aria-expanded={open}/></div>{open&&<div className="patient-listbox" role="listbox">{empty&&<button type="button" role="option" aria-selected={!selectedValue} key="empty-option" onMouseDown={e=>e.preventDefault()} onClick={()=>choose(null)}><strong>{empty}</strong><span>Clear selection</span></button>}{matches.length?matches.map((row,idx)=><button type="button" role="option" aria-selected={row.id===selectedValue||idx===activeIndex} key={row.id} style={idx===activeIndex?{background:"#e6f4f1"}:undefined} onMouseDown={e=>e.preventDefault()} onClick={()=>choose(row)}><strong>{text(row)}</strong></button>):<div className="patient-list-empty">No matching record found</div>}</div>}</div></label>
 }
 
 function PatientHistorySimple({profile,notify}:{profile:Profile;notify:(s:string)=>void}){

@@ -8,7 +8,7 @@ import { supabase } from "../../../lib/supabase";
 import { deductSaleItemStock, fetchBillingRatePreview, resolveBillingBatchesForProduct } from "../../../lib/inventory-stock";
 import { money } from "../lib/format";
 import { postJournal } from "../lib/accounting";
-import { Organization, Profile, Row } from "../lib/types";
+import { getBillingPrintConfig, Organization, Profile, Row } from "../lib/types";
 import { AsyncSelect, Field, QuickPatientModal } from "./controls";
 
 function productText(row: Row) {
@@ -50,10 +50,18 @@ export function PrintableInvoice({
   specialDiscountAmount, 
   total,
   pendingFee,
-  title
+  title,
+  pageBreakBefore,
+  pageBreakAfter,
 }: any) {
   return (
-    <div className="print-only">
+    <div
+      className={`print-only print-sheet${pageBreakBefore ? " print-sheet-break-before" : ""}${pageBreakAfter ? " print-sheet-break-after" : ""}`}
+      style={{
+        ...(pageBreakBefore ? { pageBreakBefore: "always", breakBefore: "page" } : {}),
+        ...(pageBreakAfter ? { pageBreakAfter: "always", breakAfter: "page" } : {}),
+      }}
+    >
       <div className="print-header">
         <h1>{organization?.clinic_name || organization?.pharmacy_name || "CLINIC / PHARMACY"}</h1>
         <p>{organization?.address || "Address not provided"}</p>
@@ -81,23 +89,33 @@ export function PrintableInvoice({
             <th>Item / Medicine</th>
             <th>Batch</th>
             <th className="right">Qty</th>
+            <th className="right">MRP</th>
+            <th className="right">Discount</th>
             <th className="right">Rate</th>
             <th className="right">GST</th>
             <th className="right">Total</th>
           </tr>
         </thead>
         <tbody>
-          {cart.map((item: any, i: number) => (
-            <tr key={i}>
-              <td>{i + 1}</td>
-              <td>{item.name}</td>
-              <td>{item.batch_number}</td>
-              <td className="right">{item.qty}</td>
-              <td className="right">{Number(item.selling_rate).toFixed(2)}</td>
-              <td className="right">{item.gst_percent || 0}%</td>
-              <td className="right">{(Number(item.selling_rate) * Number(item.qty)).toFixed(2)}</td>
-            </tr>
-          ))}
+          {cart.map((item: any, i: number) => {
+            const mrpRate = Number(item.mrp_unit_rate || item.mrp || item.original_selling_rate || item.selling_rate || 0);
+            const discountPercent = Number(item.sales_discount_percent ?? item.original_sales_discount_percent ?? 0);
+            const sellingRate = Number(item.selling_rate || 0);
+            const qtyVal = Number(item.qty || 0);
+            return (
+              <tr key={i}>
+                <td>{i + 1}</td>
+                <td>{item.name}</td>
+                <td>{item.batch_number}</td>
+                <td className="right">{qtyVal}</td>
+                <td className="right">{mrpRate.toFixed(2)}</td>
+                <td className="right">{discountPercent}%</td>
+                <td className="right">{sellingRate.toFixed(2)}</td>
+                <td className="right">{item.gst_percent || 0}%</td>
+                <td className="right">{(sellingRate * qtyVal).toFixed(2)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
@@ -135,27 +153,379 @@ export function PrintableInvoice({
   );
 }
 
+// --- Printable Prescription Component ---
+export function PrintablePrescription({
+  organization,
+  patientName,
+  patientId,
+  mobile,
+  patientRow,
+  consultation,
+  cart,
+  date,
+  invoiceNo,
+  pageBreakBefore,
+  pageBreakAfter,
+}: any) {
+  const vitals = consultation?.vitals || {};
+  const rxItems: any[] = Array.isArray(vitals.prescription_items) ? vitals.prescription_items : [];
+  const doc = Array.isArray(consultation?.doctor) ? consultation.doctor[0] : consultation?.doctor;
+  const pat = Array.isArray(consultation?.patient) ? consultation.patient[0] : (consultation?.patient || patientRow);
+
+  // Build unified medicine list for prescription print:
+  // If cart items exist, combine quantities per product and attach doctor dosage/timing from rxItems or cart item
+  const medicineRows: Array<{
+    name: string;
+    schedule: string;
+    food: string;
+    days: string;
+    qty: number;
+  }> = [];
+
+  if (Array.isArray(cart) && cart.length > 0) {
+    const grouped = new Map<string, { name: string; qty: number; dosage_schedule?: string; product_id?: string }>();
+    for (const item of cart) {
+      const key = String(item.product_id || item.name || "");
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.qty += Number(item.qty || 0);
+        if (!existing.dosage_schedule && item.dosage_schedule) existing.dosage_schedule = item.dosage_schedule;
+      } else {
+        grouped.set(key, {
+          name: item.name || "-",
+          qty: Number(item.qty || 0),
+          dosage_schedule: item.dosage_schedule || "",
+          product_id: item.product_id,
+        });
+      }
+    }
+    for (const g of grouped.values()) {
+      const matchedRx = rxItems.find(
+        (r) => (g.product_id && r.product_id === g.product_id) || String(r.name || "").toLowerCase() === String(g.name || "").toLowerCase()
+      );
+      if (matchedRx) {
+        const timingLabels: string[] = [];
+        if (matchedRx.morning) timingLabels.push("Morning");
+        if (matchedRx.afternoon) timingLabels.push("Afternoon");
+        if (matchedRx.evening) timingLabels.push("Evening");
+        if (matchedRx.night) timingLabels.push("Night");
+        const code = `${matchedRx.morning ? 1 : 0}-${matchedRx.afternoon ? 1 : 0}-${matchedRx.evening ? 1 : 0}-${matchedRx.night ? 1 : 0}`;
+        medicineRows.push({
+          name: g.name,
+          schedule: `${code}${timingLabels.length ? ` (${timingLabels.join(", ")})` : ""}`,
+          food: matchedRx.food || "-",
+          days: matchedRx.days ? `${matchedRx.days} day(s)` : "-",
+          qty: g.qty,
+        });
+      } else {
+        medicineRows.push({
+          name: g.name,
+          schedule: g.dosage_schedule || "-",
+          food: "-",
+          days: "-",
+          qty: g.qty,
+        });
+      }
+    }
+  } else if (rxItems.length > 0) {
+    for (const r of rxItems) {
+      const timingLabels: string[] = [];
+      if (r.morning) timingLabels.push("Morning");
+      if (r.afternoon) timingLabels.push("Afternoon");
+      if (r.evening) timingLabels.push("Evening");
+      if (r.night) timingLabels.push("Night");
+      const code = `${r.morning ? 1 : 0}-${r.afternoon ? 1 : 0}-${r.evening ? 1 : 0}-${r.night ? 1 : 0}`;
+      medicineRows.push({
+        name: r.name || "-",
+        schedule: `${code}${timingLabels.length ? ` (${timingLabels.join(", ")})` : ""}`,
+        food: r.food || "-",
+        days: r.days ? `${r.days} day(s)` : "-",
+        qty: Number(r.qty || 1),
+      });
+    }
+  }
+
+  const hasVitals = vitals.bp || vitals.sugar || vitals.weight || vitals.temperature || vitals.pulse || vitals.spo2;
+
+  return (
+    <div
+      className={`print-only print-sheet${pageBreakBefore ? " print-sheet-break-before" : ""}${pageBreakAfter ? " print-sheet-break-after" : ""}`}
+      style={{
+        ...(pageBreakBefore ? { pageBreakBefore: "always", breakBefore: "page" } : {}),
+        ...(pageBreakAfter ? { pageBreakAfter: "always", breakAfter: "page" } : {}),
+      }}
+    >
+      <div className="print-header">
+        <h1>{organization?.clinic_name || organization?.pharmacy_name || "CLINIC / HOSPITAL"}</h1>
+        <p>{organization?.address || "Address not provided"}</p>
+        <p>
+          Phone: {organization?.phone || "-"}
+          {organization?.drug_license_number ? ` | DL No: ${organization.drug_license_number}` : ""}
+        </p>
+      </div>
+
+      <div className="print-details">
+        <div className="patient-info">
+          <strong>Patient Details:</strong><br />
+          <strong>{patientName || pat?.name || "Walk-in Patient"}</strong>
+          {(pat?.age || pat?.gender) ? ` (${[pat?.age ? `${pat.age} yrs` : "", pat?.gender || ""].filter(Boolean).join(" / ")})` : ""}<br />
+          {(patientId || pat?.patient_id) ? `Patient ID: ${patientId || pat?.patient_id}` : ""}<br />
+          {(mobile || pat?.mobile) ? `Phone: ${mobile || pat?.mobile}` : ""}
+        </div>
+        <div className="invoice-info">
+          <h2>PRESCRIPTION (Rx)</h2>
+          {doc?.name && (
+            <>
+              <strong>Doctor:</strong> Dr. {String(doc.name).replace(/^Dr\.?\s*/i, "")}
+              {doc.qualification ? ` (${doc.qualification})` : ""}
+              {doc.specialization ? ` - ${doc.specialization}` : ""}<br />
+            </>
+          )}
+          {vitals.token_no && <><strong>Token No:</strong> #{vitals.token_no}<br /></>}
+          {invoiceNo && <><strong>Ref Bill No:</strong> {invoiceNo}<br /></>}
+          <strong>Date:</strong> {date ? new Date(date).toLocaleString() : (consultation?.visited_at ? new Date(consultation.visited_at).toLocaleString() : new Date().toLocaleString())}
+        </div>
+      </div>
+
+      {hasVitals && (
+        <div style={{ border: "1px solid #ccc", borderRadius: "6px", padding: "8px 12px", marginBottom: "14px", fontSize: "12px", display: "flex", flexWrap: "wrap", gap: "16px" }}>
+          {vitals.bp && <span><strong>BP:</strong> {vitals.bp} mmHg</span>}
+          {vitals.sugar && <span><strong>Sugar:</strong> {vitals.sugar} mg/dL</span>}
+          {vitals.weight && <span><strong>Weight:</strong> {vitals.weight} kg</span>}
+          {vitals.temperature && <span><strong>Temp:</strong> {vitals.temperature} °F</span>}
+          {vitals.pulse && <span><strong>Pulse:</strong> {vitals.pulse} bpm</span>}
+          {vitals.spo2 && <span><strong>SpO2:</strong> {vitals.spo2}%</span>}
+        </div>
+      )}
+
+      {(consultation?.symptoms || consultation?.diagnosis || consultation?.clinical_notes) && (
+        <div style={{ marginBottom: "16px", fontSize: "13px", lineHeight: 1.5 }}>
+          {consultation?.symptoms && <div><strong>Symptoms / Complaints:</strong> {consultation.symptoms}</div>}
+          {consultation?.diagnosis && <div><strong>Diagnosis:</strong> {consultation.diagnosis}</div>}
+          {consultation?.clinical_notes && <div><strong>Clinical Notes:</strong> {consultation.clinical_notes}</div>}
+        </div>
+      )}
+
+      <div style={{ fontWeight: 800, fontSize: "15px", marginBottom: "8px" }}>℞ Prescribed Medicines</div>
+      <table className="print-table">
+        <thead>
+          <tr>
+            <th style={{ width: "45px" }}>S.No</th>
+            <th>Medicine Name</th>
+            <th>Dosage / Timing (M-A-E-N)</th>
+            <th>Instruction</th>
+            <th>Duration</th>
+            <th className="right" style={{ width: "65px" }}>Qty</th>
+          </tr>
+        </thead>
+        <tbody>
+          {medicineRows.length > 0 ? (
+            medicineRows.map((row, idx) => (
+              <tr key={idx}>
+                <td>{idx + 1}</td>
+                <td><strong>{row.name}</strong></td>
+                <td>{row.schedule}</td>
+                <td>{row.food}</td>
+                <td>{row.days}</td>
+                <td className="right">{row.qty}</td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={6} style={{ textAlign: "center" }}>No medicines listed</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {consultation?.prescription_notes && (
+        <div style={{ marginBottom: "16px", fontSize: "13px" }}>
+          <strong>Advice / Instructions:</strong> {consultation.prescription_notes}
+        </div>
+      )}
+
+      {consultation?.follow_up_date && (
+        <div style={{ marginBottom: "20px", fontSize: "13px" }}>
+          <strong>Follow-up Date:</strong> {new Date(consultation.follow_up_date).toLocaleDateString()}
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: "45px", paddingTop: "12px", borderTop: "1px dashed #ccc", fontSize: "12px" }}>
+        <div>Generated by {organization?.clinic_name || "Siva Clinic Software"}</div>
+        <div style={{ textAlign: "right" }}>
+          <strong>{doc?.name ? `Dr. ${String(doc.name).replace(/^Dr\.?\s*/i, "")}` : "Doctor's Signature"}</strong>
+          {doc?.registration_number ? <div>Reg. No: {doc.registration_number}</div> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function BillingWorkflow({ profile, organization, notify }: { profile: Profile; organization: Organization | null; notify: (message: string) => void }) {
   const [patientId, setPatientId] = useState("");
   const [patientRow, setPatientRow] = useState<Row | null>(null);
   const [productId, setProductId] = useState("");
   const [product, setProduct] = useState<Row | null>(null);
   const [barcodeInput, setBarcodeInput] = useState("");
+  const [tokenSearch, setTokenSearch] = useState("");
   const [qty, setQty] = useState(1);
   const [cart, setCart] = useState<Row[]>([]);
   const [paymentMode, setPaymentMode] = useState<"cash" | "upi" | "card" | "bank">("cash");
   const [saving, setSaving] = useState(false);
   const [pending, setPending] = useState<Row[]>([]);
+  const [lastSavedBill, setLastSavedBill] = useState<Row | null>(null);
 
-  useEffect(() => {
-    if (!patientId || !supabase) { setPending([]); return; }
-    supabase.from("consultations").select("id,doctor_fee,visited_at").eq("patient_id", patientId).eq("doctor_fee_collected", false).gt("doctor_fee", 0).order("visited_at", { ascending: false }).then(({ data }) => setPending(data || []));
-  }, [patientId]);
-  const [ratePreview, setRatePreview] = useState<Row | null>(null);
-  const [specialDiscountPercent, setSpecialDiscountPercent] = useState(0);
+  // Doctor Prescription (Rx) sync state
+  const [pendingRxList, setPendingRxList] = useState<Row[]>([]);
+  const [activeRxConsultation, setActiveRxConsultation] = useState<Row | null>(null);
+  const [loadingRx, setLoadingRx] = useState(false);
+
   const salesGstMode = organization?.sales_gst_mode || "price_plus_gst";
   const isPriceOnly = salesGstMode === "price_only";
   const settingDiscount = Number(organization?.sales_discount_percent || 0);
+  const printConfig = getBillingPrintConfig(profile.organization_id, organization);
+
+  const fetchPendingPrescriptions = async () => {
+    if (!supabase) return;
+    const todayStr = todayInput();
+    const { data } = await supabase
+      .from("consultations")
+      .select("id,patient_id,doctor_id,visited_at,symptoms,diagnosis,clinical_notes,prescription_notes,follow_up_date,doctor_fee,doctor_fee_collected,vitals,patient:patients(id,patient_id,name,age,gender,mobile),doctor:doctors(id,name,qualification,specialization,registration_number)")
+      .eq("organization_id", profile.organization_id)
+      .gte("visited_at", `${todayStr}T00:00:00`)
+      .order("visited_at", { ascending: false })
+      .limit(100);
+
+    const list = (data || []).filter((r: Row) => {
+      const items = r.vitals?.prescription_items;
+      const hasRx = (Array.isArray(items) && items.length > 0) || Boolean(r.prescription_notes);
+      return hasRx && !r.vitals?.rx_billed;
+    });
+    setPendingRxList(list);
+  };
+
+  useEffect(() => {
+    fetchPendingPrescriptions();
+  }, [profile.organization_id]);
+
+  const loadPrescriptionItemsIntoCart = async (consultationRow: Row, replaceExisting = true) => {
+    if (!supabase) return;
+    const rxItems: any[] = Array.isArray(consultationRow?.vitals?.prescription_items)
+      ? consultationRow.vitals.prescription_items
+      : [];
+    if (rxItems.length === 0) return;
+
+    setLoadingRx(true);
+    try {
+      const productIds = rxItems.map((x) => x.product_id).filter(Boolean);
+      const { data: prodRows } = await supabase
+        .from("products")
+        .select("id,product_id,name,barcode,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit")
+        .in("id", productIds);
+      const prodMap = new Map<string, Row>((prodRows || []).map((p: Row) => [p.id, p]));
+
+      let workingCart: Row[] = replaceExisting ? [] : [...cart];
+      for (const rx of rxItems) {
+        const prod = prodMap.get(rx.product_id) || { id: rx.product_id, name: rx.name };
+        const reqQty = Math.max(1, Number(rx.qty || 1));
+        const res = await resolveBillingBatchesForProduct(supabase, {
+          organizationId: profile.organization_id,
+          productId: rx.product_id,
+          product: prod,
+          requestedQty: reqQty,
+          cartItems: workingCart,
+          settingDiscount,
+          today: todayInput(),
+        });
+        if (res.allocations && res.allocations.length > 0) {
+          const timingParts: string[] = [];
+          if (rx.morning) timingParts.push("Morning");
+          if (rx.afternoon) timingParts.push("Afternoon");
+          if (rx.evening) timingParts.push("Evening");
+          if (rx.night) timingParts.push("Night");
+          const scheduleStr = `${rx.morning ? 1 : 0}-${rx.afternoon ? 1 : 0}-${rx.evening ? 1 : 0}-${rx.night ? 1 : 0}${timingParts.length ? ` (${timingParts.join(", ")})` : ""}${rx.food ? ` · ${rx.food}` : ""}`;
+          const annotated = res.allocations.map((alloc: Row) => ({
+            ...alloc,
+            dosage_schedule: scheduleStr,
+            prescribed_qty: reqQty,
+          }));
+          workingCart = [...workingCart, ...annotated];
+        }
+      }
+      setCart(workingCart);
+      notify(`Loaded ${rxItems.length} prescribed medicine(s) into bill — you can edit quantities or add items`);
+    } finally {
+      setLoadingRx(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!patientId || !supabase) {
+      setPending([]);
+      setActiveRxConsultation(null);
+      return;
+    }
+    supabase
+      .from("consultations")
+      .select("id,doctor_fee,visited_at")
+      .eq("patient_id", patientId)
+      .eq("doctor_fee_collected", false)
+      .gt("doctor_fee", 0)
+      .order("visited_at", { ascending: false })
+      .then(({ data }) => setPending(data || []));
+
+    // Fetch latest consultation for this patient to show & auto-load Doctor Prescription
+    supabase
+      .from("consultations")
+      .select("id,patient_id,doctor_id,visited_at,symptoms,diagnosis,clinical_notes,prescription_notes,follow_up_date,doctor_fee,vitals,patient:patients(id,patient_id,name,age,gender,mobile),doctor:doctors(id,name,qualification,specialization,registration_number)")
+      .eq("patient_id", patientId)
+      .order("visited_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data && (Array.isArray(data.vitals?.prescription_items) && data.vitals.prescription_items.length > 0 || data.prescription_notes)) {
+          setActiveRxConsultation(data);
+          if (!data.vitals?.rx_billed && Array.isArray(data.vitals?.prescription_items) && data.vitals.prescription_items.length > 0) {
+            loadPrescriptionItemsIntoCart(data, true);
+          }
+        } else {
+          setActiveRxConsultation(null);
+        }
+      });
+  }, [patientId]);
+
+  const lookupBillingToken = async (rawToken: string) => {
+    const clean = rawToken.trim().replace(/^#|^T-/i, "");
+    if (!clean || !supabase) return;
+    const todayStr = todayInput();
+    const { data } = await supabase
+      .from("consultations")
+      .select("id,patient_id,doctor_id,visited_at,symptoms,diagnosis,clinical_notes,prescription_notes,follow_up_date,doctor_fee,vitals,patient:patients(id,patient_id,name,age,gender,mobile),doctor:doctors(id,name,qualification,specialization,registration_number)")
+      .eq("organization_id", profile.organization_id)
+      .gte("visited_at", `${todayStr}T00:00:00`)
+      .order("visited_at", { ascending: false })
+      .limit(100);
+
+    const matched: any = (data || []).find((r: Row) => {
+      const t = String(r.vitals?.token_no || "").trim().replace(/^#|^T-/i, "");
+      return t.toLowerCase() === clean.toLowerCase() || (Number(t) > 0 && Number(t) === Number(clean));
+    });
+
+    const pat = Array.isArray(matched?.patient) ? matched.patient[0] : matched?.patient;
+    if (matched && pat) {
+      setPatientId(pat.id);
+      setPatientRow(pat);
+      setActiveRxConsultation(matched);
+      if (Array.isArray(matched.vitals?.prescription_items) && matched.vitals.prescription_items.length > 0) {
+        loadPrescriptionItemsIntoCart(matched, true);
+      }
+    } else {
+      notify(`No consultation found today for Token #${rawToken}`);
+    }
+  };
+
+  const [ratePreview, setRatePreview] = useState<Row | null>(null);
+  const [specialDiscountPercent, setSpecialDiscountPercent] = useState(0);
   const medicine = cart.reduce((sum, item) => sum + (isPriceOnly ? Number(item.selling_rate) * Number(item.qty) : (Number(item.selling_rate) * Number(item.qty)) / (1 + Number(item.gst_percent || 0) / 100)), 0);
   const tax = cart.reduce((sum, item) => sum + (isPriceOnly ? Number(item.selling_rate) * Number(item.qty) * Number(item.gst_percent || 0) / 100 : Number(item.selling_rate) * Number(item.qty) - (Number(item.selling_rate) * Number(item.qty)) / (1 + Number(item.gst_percent || 0) / 100)), 0);
   const grossTotal = isPriceOnly ? medicine + tax : cart.reduce((sum, item) => sum + Number(item.selling_rate) * Number(item.qty), 0);
@@ -318,7 +688,7 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       organization_id: profile.organization_id,
       invoice_no: invoice,
       patient_id: patientId || null,
-      consultation_id: pending.length === 1 ? pending[0].id : null,
+      consultation_id: pending.length === 1 ? pending[0].id : (activeRxConsultation?.id || null),
       medicine_subtotal: medicine,
       medicine_tax: tax,
       pharmacy_revenue: pharmacyRevenue,
@@ -337,6 +707,15 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       setSaving(false);
       notify(error?.message || "Sale save failed");
       return;
+    }
+    if (activeRxConsultation?.id) {
+      await supabase
+        .from("consultations")
+        .update({
+          vitals: { ...(activeRxConsultation.vitals || {}), rx_billed: true, billed_sale_id: sale.id },
+        })
+        .eq("id", activeRxConsultation.id)
+        .eq("organization_id", profile.organization_id);
     }
     for (const p of pending) {
       await supabase.rpc("collect_consultation_fee", {
@@ -395,31 +774,256 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       if (fee > 0) lines.push({ ledger: "Consultation Revenue", credit: Number(fee.toFixed(2)) });
       await postJournal(profile, { voucherType: "sale", entryDate: new Date().toISOString(), referenceType: "sale", referenceId: sale.id, referenceNumber: invoice, narration: `Sale bill ${invoice} (${paymentMode.toUpperCase()})`, lines });
     } catch {}
+    setLastSavedBill({
+      patientName: patientRow?.name || "Walk-in Patient",
+      patientId: patientRow?.patient_id || "",
+      mobile: patientRow?.mobile || "",
+      patientRow: patientRow ? { ...patientRow } : null,
+      consultation: activeRxConsultation ? { ...activeRxConsultation } : null,
+      invoiceNo: invoice,
+      date: new Date().toISOString(),
+      cart: [...cart],
+      medicine,
+      tax,
+      specialDiscountAmount,
+      total,
+      pendingFee: fee,
+    });
     setSaving(false);
     setCart([]);
     setSpecialDiscountPercent(0);
     setPatientId("");
     setPatientRow(null);
+    setActiveRxConsultation(null);
     setPending([]);
     setProductId("");
     setProduct(null);
     setQty(1);
     setRatePreview(null);
+    fetchPendingPrescriptions();
     notify(`${invoice} saved (${paymentMode.toUpperCase()})`);
+    const latestPrintCfg = getBillingPrintConfig(profile.organization_id, organization);
+    if (latestPrintCfg.print_prescription || latestPrintCfg.print_bill) {
+      setTimeout(() => {
+        if (typeof Capacitor === "undefined" || !Capacitor.isNativePlatform()) {
+          window.print();
+        }
+      }, 150);
+    }
   };
 
-  return <div><PrintableInvoice organization={organization} patientName={patientRow?.name || "Walk-in Patient"} patientId={patientRow?.patient_id || ""} mobile={patientRow?.mobile || ""} invoiceNo={""} date={""} cart={cart} medicine={medicine} tax={tax} specialDiscountAmount={specialDiscountAmount} total={total} pendingFee={pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0)} title="PHARMACY INVOICE" /><div className="no-print"><div className="page-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}><div><h1>Billing {cart.length > 0 && <span className="billing-head-total">{money(total)}</span>}</h1></div>
-    <div className="print-hide" style={{ display: 'flex', gap: '10px' }}>
-      <button className="secondary" onClick={() => (typeof Capacitor !== "undefined" && Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print())} style={{ minHeight: '38px' }}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '6px'}}><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
-        Print
-      </button>
-      <button className="secondary" onClick={() => { alert("In the print dialog, select 'Save as PDF' as your printer."); (typeof Capacitor !== "undefined" && Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print()); }} style={{ minHeight: '38px' }}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '6px'}}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-        PDF Export
-      </button>
+  const printSource = cart.length > 0 || !lastSavedBill
+    ? {
+        patientName: patientRow?.name || "Walk-in Patient",
+        patientId: patientRow?.patient_id || "",
+        mobile: patientRow?.mobile || "",
+        patientRow,
+        consultation: activeRxConsultation,
+        invoiceNo: "",
+        date: "",
+        cart,
+        medicine,
+        tax,
+        specialDiscountAmount,
+        total,
+        pendingFee: pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0),
+      }
+    : lastSavedBill;
+
+  const printModeLabel =
+    printConfig.print_prescription && printConfig.print_bill
+      ? "Prescription + Bill"
+      : printConfig.print_prescription
+      ? "Prescription Only"
+      : printConfig.print_bill
+      ? "Bill Only"
+      : "Print Disabled";
+
+  return <div>
+      {printConfig.print_prescription && (
+        <PrintablePrescription
+          organization={organization}
+          patientName={printSource.patientName}
+          patientId={printSource.patientId}
+          mobile={printSource.mobile}
+          patientRow={printSource.patientRow}
+          consultation={printSource.consultation}
+          cart={printSource.cart}
+          date={printSource.date}
+          invoiceNo={printSource.invoiceNo}
+          pageBreakAfter={printConfig.print_bill}
+        />
+      )}
+      {printConfig.print_bill && (
+        <PrintableInvoice
+          organization={organization}
+          patientName={printSource.patientName}
+          patientId={printSource.patientId}
+          mobile={printSource.mobile}
+          invoiceNo={printSource.invoiceNo}
+          date={printSource.date}
+          cart={printSource.cart}
+          medicine={printSource.medicine}
+          tax={printSource.tax}
+          specialDiscountAmount={printSource.specialDiscountAmount}
+          total={printSource.total}
+          pendingFee={printSource.pendingFee}
+          title="PHARMACY INVOICE"
+          pageBreakBefore={printConfig.print_prescription}
+        />
+      )}
+      <div className="no-print">
+        <div className="page-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
+          <div>
+            <h1>Billing {cart.length > 0 && <span className="billing-head-total">{money(total)}</span>}</h1>
+            <p>Load Doctor Prescription automatically or bill directly from paper prescription.</p>
+          </div>
+          <div className="print-hide" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '12px', fontWeight: 700, padding: '6px 10px', borderRadius: '999px', background: '#f0fdf4', color: '#0f766e', border: '1px solid #99f6e4' }}>
+              Print Setting: {printModeLabel}
+            </span>
+            <button className="secondary" onClick={() => (typeof Capacitor !== "undefined" && Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print())} style={{ minHeight: '38px' }}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '6px'}}><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+              Print ({printModeLabel})
+            </button>
+            <button className="secondary" onClick={() => { alert("In the print dialog, select 'Save as PDF' as your printer."); (typeof Capacitor !== "undefined" && Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print()); }} style={{ minHeight: '38px' }}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{marginRight: '6px'}}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+              PDF Export
+            </button>
+          </div>
+        </div>
+
+  {/* Pending Doctor Prescriptions Queue */}
+  {pendingRxList.length > 0 && (
+    <div className="panel" style={{ marginBottom: "14px", background: "#f0fdf4", border: "1px solid #86efac", padding: "12px 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <strong style={{ color: "#166534", fontSize: "13px" }}>Today&apos;s Doctor Prescriptions Ready for Billing ({pendingRxList.length}):</strong>
+        {pendingRxList.map((rx) => {
+          const itemCount = Array.isArray(rx.vitals?.prescription_items) ? rx.vitals.prescription_items.length : 0;
+          const isSelected = activeRxConsultation?.id === rx.id;
+          return (
+            <button
+              key={rx.id}
+              type="button"
+              onClick={() => {
+                if (rx.patient) {
+                  setPatientId(rx.patient.id);
+                  setPatientRow(rx.patient);
+                }
+                setActiveRxConsultation(rx);
+                if (itemCount > 0) loadPrescriptionItemsIntoCart(rx, true);
+              }}
+              style={{
+                padding: "6px 12px",
+                borderRadius: "999px",
+                border: isSelected ? "2px solid #0f766e" : "1px solid #4ade80",
+                background: isSelected ? "#0f766e" : "#fff",
+                color: isSelected ? "#fff" : "#14532d",
+                fontWeight: 600,
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
+              {rx.vitals?.token_no ? `#${rx.vitals.token_no} · ` : ""}
+              {rx.patient?.name || "Patient"} ({itemCount} med{itemCount === 1 ? "" : "s"})
+            </button>
+          );
+        })}
+      </div>
     </div>
-  </div><div className="panel billing-panel"><div className="billing-patient-line" style={{ marginBottom: "20px", display: "flex", gap: "10px", alignItems: "flex-end", flexWrap: "wrap" }}><div style={{ flex: "1 1 260px" }}><AsyncSelect table="patients" select="id,patient_id,name,mobile" searchColumns={["patient_id", "name", "mobile"]} label="Patient / walk-in" value={patientId} displayValue={patientRow ? patientText(patientRow) : undefined} onChange={(id, row) => { setPatientId(id); setPatientRow(row || null); }} render={patientText}/></div><QuickPatientModal organizationId={profile.organization_id} notify={notify} onCreated={(created) => { setPatientId(created.id); setPatientRow(created); }} /><label className="field" style={{ flex: "0 1 220px", margin: 0 }}><span>Barcode / Code Quick Scan</span><input value={barcodeInput} onChange={(e) => setBarcodeInput(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); scanBarcode(barcodeInput); } }} placeholder="Scan barcode & press Enter"/></label></div><div className="billing-entry-line"><AsyncSelect table="products" select="id,product_id,name,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit" searchColumns={["product_id", "name", "barcode", "generic_name"]} label="Medicine" value={productId} onChange={(id, row) => { setProductId(id); setProduct(row || null); setRatePreview(null); }} render={productText}/><label className="field qty-field"><span>Quantity</span><input type="number" min="1" step="1" value={qty} onChange={(event) => setQty(Number(event.currentTarget.value))}/></label><button type="button" className="primary" onClick={add}><Plus size={16}/> Add</button></div>{ratePreview && <div className="auth-message stock-preview">Stock: <b style={{ color: Number(ratePreview.available_stock) <= 0 ? "#c53030" : undefined }}>{ratePreview.available_stock}{Number(ratePreview.available_stock) <= 0 ? " (Negative billing enabled)" : ""}</b> · Batch: <b>{ratePreview.batch_number}</b> · MRP rate: <b>{money(ratePreview.mrp_unit_rate)}</b> · Discount: <b>{Number(ratePreview.sales_discount_percent || 0)}%</b> · Final rate: <b>{money(ratePreview.final_rate)}</b> · GST: <b>{Number(ratePreview.gst_percent || 0)}% / {money(ratePreview.tax_each)}</b> · Billing rate: <b>{money(ratePreview.bill_rate)}</b></div>}{cart.length ? <><div className="data-wrap"><table className="data-table billing-table"><thead><tr><th className="col-med">Medicine</th><th className="col-batch">Batch</th><th className="col-qty">Qty</th><th className="col-rate">MRP rate</th><th className="col-rate">Discount %</th><th className="col-rate">Final rate</th><th className="col-gst">GST</th><th className="col-total">Total</th><th className="col-action"></th></tr></thead><tbody>{cart.map((item, index) => <tr key={`${item.batch_id}-${index}`} className="cart-row-interactive"><td className="col-med"><strong>{item.name}</strong></td><td className="col-batch">{item.batch_number}{(item.negative_stock_billing || Number(item.current_stock || 0) < Number(item.qty || 0)) && <span style={{ marginLeft: "6px", fontSize: "11px", color: "#c53030", fontWeight: 600 }}>(Neg)</span>}</td><td className="col-qty"><input className="table-qty-input" type="number" min="1" step="1" value={item.qty} onChange={(event) => changeQty(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate"><input className="table-qty-input" type="number" min="0" step="0.01" value={item.mrp_unit_rate ?? 0} onChange={(event) => changeMrpRate(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate"><input className="table-qty-input" type="number" min="0" max="100" step="0.01" value={item.sales_discount_percent ?? 0} onChange={(event) => changeDiscount(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.selling_rate)}</td><td className="col-gst">{Number(item.gst_percent || 0)}%</td><td className="col-total"><strong>{money(Number(item.selling_rate) * Number(item.qty))}</strong></td><td className="col-action"><button className="table-edit danger-btn" onClick={() => setCart((items) => items.filter((_, i) => i !== index))}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div><div className="checkout sales-checkout"><label className="field qty-field special-discount-field"><span>Payment mode</span><select value={paymentMode} onChange={(e) => setPaymentMode(e.currentTarget.value as any)}><option value="cash">Cash</option><option value="upi">UPI</option><option value="card">Card</option><option value="bank">Bank</option></select></label><label className="field qty-field special-discount-field"><span>Additional special discount %</span><input type="number" min="0" max="100" step="0.01" value={specialDiscountPercent} onChange={(event) => setSpecialDiscountPercent(Number(event.currentTarget.value))}/></label>{pending.length > 0 && <div className="fee-banner auth-message" style={{ marginBottom: "16px", background: "#fff5f5", color: "#c53030", padding: "12px", borderRadius: "8px", border: "1px solid #fed7d7" }}>Pending doctor fee ({pending.length}) will be collected: <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></div>}<div className="totals-mini"><span>Medicine <b>{money(medicine)}</b></span><span>Tax <b>{money(tax)}</b></span>{Number(specialDiscountPercent || 0) > 0 && <span>Special discount <b>-{money(specialDiscountAmount)}</b></span>}{pending.length > 0 && <span>Doctor fee <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></span>}<strong>Grand total <b>{money(total + pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></strong></div><button className="primary" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Complete sale ({paymentMode.toUpperCase()})</button></div></> : <div className="empty"><h3>No medicines added.</h3><p>Select medicine and add quantity.</p></div>}</div></div></div>;
+  )}
+
+  <div className="panel billing-panel">
+    <div className="billing-patient-line" style={{ marginBottom: "16px", display: "flex", gap: "10px", alignItems: "flex-end", flexWrap: "wrap" }}>
+      <label className="field" style={{ flex: "0 1 150px", margin: 0 }}>
+        <span>Token # Lookup</span>
+        <input
+          value={tokenSearch}
+          onChange={(e) => setTokenSearch(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              lookupBillingToken(tokenSearch);
+            }
+          }}
+          placeholder="Token # + Enter"
+        />
+      </label>
+      <div style={{ flex: "1 1 260px" }}>
+        <AsyncSelect table="patients" select="id,patient_id,name,mobile" searchColumns={["patient_id", "name", "mobile"]} label="Patient / walk-in" value={patientId} displayValue={patientRow ? patientText(patientRow) : undefined} onChange={(id, row) => { setPatientId(id); setPatientRow(row || null); }} render={patientText}/>
+      </div>
+      <QuickPatientModal organizationId={profile.organization_id} notify={notify} onCreated={(created) => { setPatientId(created.id); setPatientRow(created); }} />
+      <label className="field" style={{ flex: "0 1 220px", margin: 0 }}>
+        <span>Barcode / Code Quick Scan</span>
+        <input value={barcodeInput} onChange={(e) => setBarcodeInput(e.currentTarget.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); scanBarcode(barcodeInput); } }} placeholder="Scan barcode & press Enter"/>
+      </label>
+    </div>
+
+    {/* Doctor Prescription Viewer Box inside Billing */}
+    {activeRxConsultation && (
+      <div style={{ marginBottom: "18px", padding: "14px", background: "#f8fafc", border: "1px solid #94a3b8", borderRadius: "10px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "8px" }}>
+          <div>
+            <strong style={{ color: "#0f5144", fontSize: "15px" }}>
+              Doctor Prescription {activeRxConsultation.vitals?.token_no ? `(Token #${activeRxConsultation.vitals.token_no})` : ""}
+            </strong>
+            <span style={{ marginLeft: "10px", fontSize: "13px", color: "#475569" }}>
+              Dr. {activeRxConsultation.doctor?.name || "Doctor"} · {new Date(activeRxConsultation.visited_at).toLocaleString()}
+            </span>
+          </div>
+          {Array.isArray(activeRxConsultation.vitals?.prescription_items) && activeRxConsultation.vitals.prescription_items.length > 0 && (
+            <button
+              type="button"
+              className="secondary"
+              disabled={loadingRx}
+              onClick={() => loadPrescriptionItemsIntoCart(activeRxConsultation, true)}
+              style={{ minHeight: "34px", fontSize: "13px" }}
+            >
+              {loadingRx ? "Loading..." : "Reload Prescribed Items to Bill"}
+            </button>
+          )}
+        </div>
+
+        {Array.isArray(activeRxConsultation.vitals?.prescription_items) && activeRxConsultation.vitals.prescription_items.length > 0 ? (
+          <div className="data-wrap" style={{ marginTop: "6px" }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Prescribed Medicine</th>
+                  <th>Morning</th>
+                  <th>Afternoon</th>
+                  <th>Evening</th>
+                  <th>Night</th>
+                  <th>Food</th>
+                  <th>Days</th>
+                  <th>Prescribed Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeRxConsultation.vitals.prescription_items.map((item: any, idx: number) => (
+                  <tr key={`${item.product_id}-${idx}`}>
+                    <td><strong>{item.name}</strong></td>
+                    <td>{item.morning ? "✓" : "-"}</td>
+                    <td>{item.afternoon ? "✓" : "-"}</td>
+                    <td>{item.evening ? "✓" : "-"}</td>
+                    <td>{item.night ? "✓" : "-"}</td>
+                    <td>{item.food || "-"}</td>
+                    <td>{item.days || "-"}</td>
+                    <td><strong>{item.qty}</strong></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ whiteSpace: "pre-wrap", fontSize: "13px", color: "#1e293b", background: "#fff", padding: "10px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+            {activeRxConsultation.prescription_notes || "No digital medicines entered (bill directly from paper prescription below)."}
+          </div>
+        )}
+      </div>
+    )}
+
+    <div className="billing-entry-line"><AsyncSelect table="products" select="id,product_id,name,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit" searchColumns={["product_id", "name", "barcode", "generic_name"]} label="Add / Edit Medicine (or Direct Paper Rx Entry)" value={productId} onChange={(id, row) => { setProductId(id); setProduct(row || null); setRatePreview(null); }} render={productText}/><label className="field qty-field"><span>Quantity</span><input type="number" min="1" step="1" value={qty} onChange={(event) => setQty(Number(event.currentTarget.value))}/></label><button type="button" className="primary" onClick={add}><Plus size={16}/> Add</button></div>{ratePreview && <div className="auth-message stock-preview">Stock: <b style={{ color: Number(ratePreview.available_stock) <= 0 ? "#c53030" : undefined }}>{ratePreview.available_stock}{Number(ratePreview.available_stock) <= 0 ? " (Negative billing enabled)" : ""}</b> · Batch: <b>{ratePreview.batch_number}</b> · MRP rate: <b>{money(ratePreview.mrp_unit_rate)}</b> · Discount: <b>{Number(ratePreview.sales_discount_percent || 0)}%</b> · Final rate: <b>{money(ratePreview.final_rate)}</b> · GST: <b>{Number(ratePreview.gst_percent || 0)}% / {money(ratePreview.tax_each)}</b> · Billing rate: <b>{money(ratePreview.bill_rate)}</b></div>}{cart.length ? <><div className="data-wrap"><table className="data-table billing-table"><thead><tr><th className="col-med">Medicine</th><th className="col-batch">Batch</th><th className="col-qty">Qty</th><th className="col-rate">MRP rate</th><th className="col-rate">Discount %</th><th className="col-rate">Final rate</th><th className="col-gst">GST</th><th className="col-total">Total</th><th className="col-action"></th></tr></thead><tbody>{cart.map((item, index) => <tr key={`${item.batch_id}-${index}`} className="cart-row-interactive"><td className="col-med"><strong>{item.name}</strong>{item.dosage_schedule && <div style={{ fontSize: "11px", color: "#0f766e", fontWeight: 600 }}>Rx: {item.dosage_schedule}</div>}</td><td className="col-batch">{item.batch_number}{(item.negative_stock_billing || Number(item.current_stock || 0) < Number(item.qty || 0)) && <span style={{ marginLeft: "6px", fontSize: "11px", color: "#c53030", fontWeight: 600 }}>(Neg)</span>}</td><td className="col-qty"><input className="table-qty-input" type="number" min="1" step="1" value={item.qty} onChange={(event) => changeQty(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate"><input className="table-qty-input" type="number" min="0" step="0.01" value={item.mrp_unit_rate ?? 0} onChange={(event) => changeMrpRate(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate"><input className="table-qty-input" type="number" min="0" max="100" step="0.01" value={item.sales_discount_percent ?? 0} onChange={(event) => changeDiscount(index, event.currentTarget.value === "" ? "" : Number(event.currentTarget.value))} onClick={(e)=>e.stopPropagation()}/></td><td className="col-rate">{money(item.selling_rate)}</td><td className="col-gst">{Number(item.gst_percent || 0)}%</td><td className="col-total"><strong>{money(Number(item.selling_rate) * Number(item.qty))}</strong></td><td className="col-action"><button className="table-edit danger-btn" onClick={() => setCart((items) => items.filter((_, i) => i !== index))}><Trash2 size={14}/></button></td></tr>)}</tbody></table></div><div className="checkout sales-checkout"><label className="field qty-field special-discount-field"><span>Payment mode</span><select value={paymentMode} onChange={(e) => setPaymentMode(e.currentTarget.value as any)}><option value="cash">Cash</option><option value="upi">UPI</option><option value="card">Card</option><option value="bank">Bank</option></select></label><label className="field qty-field special-discount-field"><span>Additional special discount %</span><input type="number" min="0" max="100" step="0.01" value={specialDiscountPercent} onChange={(event) => setSpecialDiscountPercent(Number(event.currentTarget.value))}/></label>{pending.length > 0 && <div className="fee-banner auth-message" style={{ marginBottom: "16px", background: "#fff5f5", color: "#c53030", padding: "12px", borderRadius: "8px", border: "1px solid #fed7d7" }}>Pending doctor fee ({pending.length}) will be collected: <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></div>}<div className="totals-mini"><span>Medicine <b>{money(medicine)}</b></span><span>Tax <b>{money(tax)}</b></span>{Number(specialDiscountPercent || 0) > 0 && <span>Special discount <b>-{money(specialDiscountAmount)}</b></span>}{pending.length > 0 && <span>Doctor fee <b>{money(pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></span>}<strong>Grand total <b>{money(total + pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</b></strong></div><button className="primary" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Complete sale ({paymentMode.toUpperCase()})</button></div></> : <div className="empty"><h3>No medicines added.</h3><p>Select a patient/token to load doctor prescription, or add medicines directly from paper prescription.</p></div>}</div></div></div>;
 }
 
 export function SalesWorkflow({ profile, notify }: { profile: Profile; notify: (message: string) => void }) {

@@ -27,7 +27,22 @@ export const products = new Table({
   default_units_per_purchase_unit: column.integer,
   selling_rate: column.real,
   mrp: column.real,
+  gst_percent: column.real,
   minimum_stock: column.integer,
+  active: column.integer,
+  created_at: column.text,
+});
+
+export const suppliers = new Table({
+  organization_id: column.text,
+  supplier_id: column.text,
+  name: column.text,
+  mobile: column.text,
+  gst_number: column.text,
+  drug_license_details: column.text,
+  email: column.text,
+  address: column.text,
+  credit_period_days: column.integer,
   created_at: column.text,
 });
 
@@ -47,5 +62,6 @@ export const sales = new Table({
 export const AppSchema = new Schema({
   patients,
   products,
+  suppliers,
   sales
 });
