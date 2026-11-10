@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { CheckCircle2, LoaderCircle } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
-import { getBillingPrintConfig, Organization, Profile, Row, saveBillingPrintConfig } from "../lib/types";
+import { formatSalesGstMode, getBillingPrintConfig, Organization, Profile, Row, saveBillingDiscountConfig, saveBillingPrintConfig } from "../lib/types";
 import { Field, FormPanel } from "./controls";
 
 import { useOrganization } from "../lib/useOrganization";
@@ -27,6 +27,10 @@ export function SettingsWorkflow({ profile, onOrganizationChange, notify }: { pr
     const form = new FormData(event.currentTarget);
     setSaving(true);
     try {
+      const rawMode = String(form.get("sales_gst_mode") || "price_plus_gst");
+      const minDiscountVal = Math.max(0, Number(form.get("min_discount_medicine_value") || 0));
+      const formattedMode = formatSalesGstMode(rawMode, minDiscountVal);
+
       const payload = {
         clinic_name: form.get("clinic_name"),
         pharmacy_name: form.get("pharmacy_name"),
@@ -34,7 +38,7 @@ export function SettingsWorkflow({ profile, onOrganizationChange, notify }: { pr
         address: form.get("address"),
         gst_number: form.get("gst_number"),
         drug_license_number: form.get("drug_license_number"),
-        sales_gst_mode: form.get("sales_gst_mode"),
+        sales_gst_mode: formattedMode,
         sales_discount_percent: Number(form.get("sales_discount_percent") || 0),
         gemini_api_key: form.get("gemini_api_key"),
         groq_api_key: form.get("groq_api_key"),
@@ -45,6 +49,7 @@ export function SettingsWorkflow({ profile, onOrganizationChange, notify }: { pr
         print_prescription: printPrescription,
         print_bill: printBill,
       });
+      saveBillingDiscountConfig(profile.organization_id, minDiscountVal);
 
       const res = await supabase!.from("organizations").update(payload).eq("id", profile.organization_id).select().single();
       
@@ -52,6 +57,8 @@ export function SettingsWorkflow({ profile, onOrganizationChange, notify }: { pr
       
       const updatedOrg = {
         ...(res.data as any),
+        sales_gst_mode: rawMode,
+        min_discount_medicine_value: minDiscountVal,
         print_prescription: printPrescription,
         print_bill: printBill,
       };
@@ -93,7 +100,20 @@ export function SettingsWorkflow({ profile, onOrganizationChange, notify }: { pr
             <option value="price_only">Price only</option>
           </select>
         </label>
-        <Field name="sales_discount_percent" label="Billing discount %" type="number" defaultValue={org?.sales_discount_percent || 0} />
+        <Field name="sales_discount_percent" label="Default billing discount %" type="number" defaultValue={org?.sales_discount_percent || 0} />
+        <Field
+          name="min_discount_medicine_value"
+          label="Min. Bill Amount for Discount (₹)"
+          type="number"
+          step="0.01"
+          min="0"
+          placeholder="e.g. 100.00"
+          defaultValue={org?.min_discount_medicine_value ?? 0}
+        />
+      </div>
+
+      <div style={{ marginTop: "10px", padding: "10px 14px", border: "1px solid #bbf7d0", borderRadius: "8px", background: "#f0fdf4", fontSize: "13px", color: "#166534" }}>
+        <strong>💡 Minimum Bill Amount for Discount:</strong> If a customer&apos;s total bill amount is below this minimum threshold (e.g. ₹{org?.min_discount_medicine_value || 0}), <strong>0% discount</strong> will be applied to the bill. Only when the customer&apos;s total bill is equal to or greater than this amount will medicine discounts be applied.
       </div>
 
       {/* Billing Print Configuration */}

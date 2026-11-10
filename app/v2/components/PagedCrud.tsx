@@ -11,6 +11,7 @@ import { FieldConfig, ModuleConfig, Profile, Row } from "../lib/types";
 import { Capacitor } from "@capacitor/core";
 import { fetchMedicineCategories, saveNewMedicineCategory } from "../lib/categories";
 import MedicineImportModal from "./MedicineImportModal";
+import { triggerUniversalPrint } from "../lib/print";
 
 function isMoneyColumn(key: string) {
   return key.includes("fee") || key.includes("rate") || key.includes("amount") || key.includes("balance") || key === "mrp";
@@ -412,7 +413,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
           ) : module.key === 'expiry-alerts' ? (
             <button className="secondary primary-text" onClick={() => setShowLetterModal(true)}>Generate Replacement Letter ({selected.size})</button>
           ) : (
-            <button className="secondary primary-text" onClick={() => (Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print())}>Print / Save PDF ({selected.size} selected)</button>
+            <button className="secondary primary-text" onClick={() => triggerUniversalPrint()}>Print / Save PDF ({selected.size} selected)</button>
           )
         )}
       </div>
@@ -604,7 +605,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
           </div>
           <div className="form-actions">
             <button type="button" className="secondary" onClick={() => setShowOrderModal(false)}>Cancel</button>
-            <button className="primary" onClick={() => { setIsPrintingCustom(true); setTimeout(() => { (Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print()); setTimeout(() => { setIsPrintingCustom(false); setShowOrderModal(false); }, 500); }, 500); }}>Print Order</button>
+            <button className="primary" onClick={() => { setIsPrintingCustom(true); setTimeout(() => { triggerUniversalPrint(); setTimeout(() => { setIsPrintingCustom(false); setShowOrderModal(false); }, 500); }, 500); }}>Print Order</button>
           </div>
         </div>
       </div>
@@ -619,7 +620,7 @@ export default function PagedCrud({ module, profile, notify }: { module: ModuleC
           </div>
           <div className="form-actions" style={{ marginTop: 20 }}>
             <button type="button" className="secondary" onClick={() => setShowLetterModal(false)}>Cancel</button>
-            <button className="primary" onClick={() => { setIsPrintingCustom(true); setTimeout(() => { (Capacitor.isNativePlatform() ? alert("Printing is not supported in the mobile app. Please use the desktop version.") : window.print()); setTimeout(() => { setIsPrintingCustom(false); setShowLetterModal(false); }, 500); }, 500); }}>Print Letter</button>
+            <button className="primary" onClick={() => { setIsPrintingCustom(true); setTimeout(() => { triggerUniversalPrint(); setTimeout(() => { setIsPrintingCustom(false); setShowLetterModal(false); }, 500); }, 500); }}>Print Letter</button>
           </div>
         </div>
       </div>

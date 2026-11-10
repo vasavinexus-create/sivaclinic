@@ -145,12 +145,14 @@ export async function fetchBillingRatePreview(
     product,
     settingDiscount,
     isPriceOnly,
+    minDiscountThreshold = 0,
     today = todayDateString(),
   }: {
     productId: string;
     product: AnyRow | null;
     settingDiscount: number;
     isPriceOnly: boolean;
+    minDiscountThreshold?: number;
     today?: string;
   }
 ) {
@@ -182,6 +184,7 @@ export async function fetchBillingRatePreview(
       Number(latestBatch.selling_rate || 0) > 0
         ? Number(latestBatch.selling_rate)
         : Number(product?.selling_rate || product?.mrp || latestBatch.mrp || 0);
+    const mrpUnitRate = Math.ceil(baseSellingRate);
     const discount =
       latestBatch.sales_discount_percent == null
         ? settingDiscount
@@ -191,7 +194,7 @@ export async function fetchBillingRatePreview(
     const taxEach = isPriceOnly ? (finalRate * gst) / 100 : finalRate - finalRate / (1 + gst / 100);
 
     return {
-      mrp_unit_rate: Math.ceil(baseSellingRate),
+      mrp_unit_rate: mrpUnitRate,
       sales_discount_percent: discount,
       final_rate: finalRate,
       gst_percent: gst,
@@ -209,13 +212,14 @@ export async function fetchBillingRatePreview(
     Number(product?.selling_rate || 0) > 0
       ? Number(product?.selling_rate)
       : Number(product?.mrp || 0) / units;
+  const mrpUnitRate = Math.ceil(prodSellingRate);
   const discount = settingDiscount;
   const finalRate = discountedSaleRate(prodSellingRate, 1, discount);
   const gst = Number(product?.gst_percent || 0);
   const taxEach = isPriceOnly ? (finalRate * gst) / 100 : finalRate - finalRate / (1 + gst / 100);
 
   return {
-    mrp_unit_rate: Math.ceil(prodSellingRate),
+    mrp_unit_rate: mrpUnitRate,
     sales_discount_percent: discount,
     final_rate: finalRate,
     gst_percent: gst,
@@ -243,6 +247,7 @@ export async function resolveBillingBatchesForProduct(
     requestedQty,
     cartItems,
     settingDiscount,
+    minDiscountThreshold = 0,
     today = todayDateString(),
   }: {
     organizationId: string;
@@ -251,6 +256,7 @@ export async function resolveBillingBatchesForProduct(
     requestedQty: number;
     cartItems: AnyRow[];
     settingDiscount: number;
+    minDiscountThreshold?: number;
     today?: string;
   }
 ): Promise<{
@@ -301,12 +307,12 @@ export async function resolveBillingBatchesForProduct(
         : Number(product?.selling_rate || 0) > 0
         ? Number(product?.selling_rate)
         : Number(batch.mrp || product?.mrp || 0) / units;
+    const mrpUnitRate = Math.ceil(fallbackRate);
     const discount =
       batch.sales_discount_percent == null
         ? settingDiscount
         : Number(batch.sales_discount_percent);
     const originalRate = discountedSaleRate(fallbackRate, 1, discount);
-    const mrpUnitRate = Math.ceil(fallbackRate);
 
     return {
       ...product,
@@ -319,6 +325,7 @@ export async function resolveBillingBatchesForProduct(
       gst_percent: Number(batch.gst_percent ?? product?.gst_percent ?? 0),
       sales_discount_percent: discount,
       original_sales_discount_percent: discount,
+      configured_discount_percent: discount,
       original_selling_rate: originalRate,
       selling_rate: originalRate,
       rate_edited: false,
@@ -418,6 +425,59 @@ export async function resolveBillingBatchesForProduct(
     wentNegative,
     projectedBalance: lastProjectedBalance,
   };
+}
+
+/**
+ * Evaluates the entire bill total against the minimum bill threshold for discount.
+ * If the undiscounted bill total is below minBillThreshold, 0% discount is applied to the bill.
+ * If the undiscounted bill total is >= minBillThreshold, each medicine's configured discount % is applied.
+ * Custom rate edits made manually by cashier (item.rate_edited) are respected and not overwritten.
+ */
+export function applyBillDiscountRule<T extends Record<string, any>>(
+  cartItems: T[],
+  minBillThreshold: number
+): T[] {
+  if (!cartItems.length) return cartItems;
+
+  const threshold = Number(minBillThreshold) || 0;
+
+  // Calculate gross bill total at MRP / undiscounted unit rate
+  const rawBillTotal = cartItems.reduce((sum, item) => {
+    const unitPrice = Number(item.mrp_unit_rate || item.mrp || item.selling_rate || 0);
+    return sum + unitPrice * Number(item.qty || 0);
+  }, 0);
+
+  const qualifies = threshold <= 0 || rawBillTotal >= threshold;
+
+  return cartItems.map((item) => {
+    // If cashier manually typed a custom rate/discount, preserve their edit
+    if (item.rate_edited) return item;
+
+    const baseRate = Number(item.mrp_unit_rate || item.mrp || item.selling_rate || 0);
+    const configuredDiscount = Number(
+      item.configured_discount_percent ??
+      item.original_sales_discount_percent ??
+      item.sales_discount_percent ??
+      0
+    );
+    const activeDiscount = qualifies ? configuredDiscount : 0;
+    const activeRate = activeDiscount > 0 ? discountedSaleRate(baseRate, 1, activeDiscount) : baseRate;
+
+    if (
+      Number(item.sales_discount_percent) === activeDiscount &&
+      Math.abs(Number(item.selling_rate) - activeRate) < 0.001
+    ) {
+      return item;
+    }
+
+    return {
+      ...item,
+      configured_discount_percent: configuredDiscount,
+      original_sales_discount_percent: configuredDiscount,
+      sales_discount_percent: activeDiscount,
+      selling_rate: activeRate,
+    };
+  });
 }
 
 /**

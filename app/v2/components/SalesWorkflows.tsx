@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Eye, Printer, RotateCcw, Trash2, X } from "lucide-react";
+import { Eye, Printer, RotateCcw, Trash2, X, RotateCw } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 import { fmtDate, money } from "../lib/format";
 import { canDeleteBill, cancelBill } from "../../../lib/bill-cancellation";
@@ -10,12 +10,31 @@ import { postJournal } from "../lib/accounting";
 import { Organization, Profile, Row } from "../lib/types";
 import { PrintableInvoice } from "./PharmacyWorkflows";
 
-export function SalesWorkflow({ profile, organization, notify }: { profile: Profile; organization?: Organization | null; notify: (message: string) => void }) {
+const getTodayStr = () => {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+};
+
+export function SalesWorkflow({
+  profile,
+  organization,
+  notify,
+  todayOnly = false,
+  hideHeader = false,
+}: {
+  profile: Profile;
+  organization?: Organization | null;
+  notify: (message: string) => void;
+  todayOnly?: boolean;
+  hideHeader?: boolean;
+}) {
   const [tab, setTab] = useState<"completed" | "cancelled">("completed");
-  const [fromInput, setFromInput] = useState(() => new Date().toISOString().slice(0, 10));
-  const [toInput, setToInput] = useState(() => new Date().toISOString().slice(0, 10));
-  const [fromDate, setFromDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [fromInput, setFromInput] = useState(() => getTodayStr());
+  const [toInput, setToInput] = useState(() => getTodayStr());
+  const [fromDate, setFromDate] = useState(() => getTodayStr());
+  const [toDate, setToDate] = useState(() => getTodayStr());
+  const [searchQuery, setSearchQuery] = useState("");
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewSale, setViewSale] = useState<Row | null>(null);
@@ -26,21 +45,30 @@ export function SalesWorkflow({ profile, organization, notify }: { profile: Prof
   const load = () => {
     if (!supabase) return;
     setLoading(true);
+    const start = todayOnly ? getTodayStr() + "T00:00:00" : fromDate + "T00:00:00";
+    const end = todayOnly ? getTodayStr() + "T23:59:59" : toDate + "T23:59:59";
     supabase
       .from("sales")
       .select("id,invoice_no,sold_at,grand_total,medicine_subtotal,medicine_tax,special_discount_amount,pharmacy_revenue,doctor_fee,payment_mode,status,sale_type,patient_id,patient:patients(patient_id,name,mobile),sale_items(id,product_id,batch_id,quantity,returned_quantity,unit_rate,original_unit_rate,mrp,mrp_unit_rate,sales_discount_percent,original_sales_discount_percent,gst_percent,line_total,product:products(name,mrp,selling_rate,default_units_per_purchase_unit),batch:medicine_batches(batch_number,current_stock,stock_unit_qty,mrp,selling_rate,sales_discount_percent))")
       .eq("organization_id", profile.organization_id)
       .eq("status", tab)
-      .gte("sold_at", fromDate + "T00:00:00")
-      .lte("sold_at", toDate + "T23:59:59")
+      .gte("sold_at", start)
+      .lte("sold_at", end)
       .order("sold_at", { ascending: false })
-      .limit(200)
+      .limit(300)
       .then(({ data }) => {
         setRows(data || []);
         setLoading(false);
       });
   };
-  useEffect(load, [tab, fromDate, toDate, profile.organization_id]);
+
+  useEffect(() => {
+    load();
+    if (todayOnly) {
+      const interval = setInterval(load, 15000);
+      return () => clearInterval(interval);
+    }
+  }, [tab, fromDate, toDate, profile.organization_id, todayOnly]);
 
   const cancelSale = async (sale: Row) => {
     if (!canDeleteBill(profile.role, sale.sold_at, sale.status)) { notify("Only admin can delete bills from another day"); return; }
@@ -249,6 +277,17 @@ export function SalesWorkflow({ profile, organization, notify }: { profile: Prof
       })
     : [];
 
+  const filteredRows = rows.filter((sale) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase().trim();
+    return (
+      String(sale.invoice_no || "").toLowerCase().includes(q) ||
+      String(sale.patient?.name || "").toLowerCase().includes(q) ||
+      String(sale.patient?.mobile || "").toLowerCase().includes(q) ||
+      String(sale.patient?.patient_id || "").toLowerCase().includes(q)
+    );
+  });
+
   return (
     <div className="sales-page">
       {viewSale && (
@@ -269,25 +308,57 @@ export function SalesWorkflow({ profile, organization, notify }: { profile: Prof
         />
       )}
       <div className="no-print">
-        <div className="page-head"><div><h1>Sales</h1><p>Sales register with invoice reprint, partial returns, and cancellation audit.</p></div></div>
-        <div className="panel">
-          <div className="sales-tools">
-            <div className="tab-row sales-tabs">
-              <button className={tab==="completed"?"active":""} onClick={()=>setTab("completed")}>Completed</button>
-              <button className={tab==="cancelled"?"active":""} onClick={()=>setTab("cancelled")}>Cancelled</button>
+        {!hideHeader && (
+          <div className="page-head">
+            <div>
+              <h1>{todayOnly ? "Today's Bills" : "Sales"}</h1>
+              <p>{todayOnly ? "Today's sales register with invoice reprint, returns, and cancellation." : "Sales register with invoice reprint, partial returns, and cancellation audit."}</p>
             </div>
-            <form className="sales-date-form" onSubmit={(e) => { e.preventDefault(); setFromDate(fromInput); setToDate(toInput); }}>
-              <div className="sales-date-headings"><span>From</span><span>To</span></div>
-              <div className="sales-date-inputs"><input aria-label="From date" type="date" value={fromInput} onChange={(e) => setFromInput(e.target.value)} required /><input aria-label="To date" type="date" value={toInput} min={fromInput} onChange={(e) => setToInput(e.target.value)} required /></div>
-              <button type="submit" className="primary">Load</button>
-            </form>
           </div>
-          {loading ? <div className="loading-panel">Loading sales...</div> : rows.length ? (
+        )}
+        <div className="panel">
+          <div className="sales-tools" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+              <div className="tab-row sales-tabs" style={{ margin: 0 }}>
+                <button type="button" className={tab==="completed"?"active":""} onClick={()=>setTab("completed")}>Completed ({tab==="completed" ? rows.length : ""})</button>
+                <button type="button" className={tab==="cancelled"?"active":""} onClick={()=>setTab("cancelled")}>Cancelled ({tab==="cancelled" ? rows.length : ""})</button>
+              </div>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search invoice or patient..."
+                style={{ padding: "6px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13px", minWidth: "210px" }}
+              />
+            </div>
+            {todayOnly ? (
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "13px", fontWeight: 700, color: "#166534" }}>
+                  Today&apos;s Total ({rows.length} bills): {money(rows.reduce((sum, r) => sum + Number(r.grand_total || 0), 0))}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => { load(); notify("Today's bills refreshed"); }}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "6px", minHeight: "34px", fontSize: "13px" }}
+                >
+                  <RotateCw size={14} /> Refresh Bills
+                </button>
+              </div>
+            ) : (
+              <form className="sales-date-form" onSubmit={(e) => { e.preventDefault(); setFromDate(fromInput); setToDate(toInput); }}>
+                <div className="sales-date-headings"><span>From</span><span>To</span></div>
+                <div className="sales-date-inputs"><input aria-label="From date" type="date" value={fromInput} onChange={(e) => setFromInput(e.target.value)} required /><input aria-label="To date" type="date" value={toInput} min={fromInput} onChange={(e) => setToInput(e.target.value)} required /></div>
+                <button type="submit" className="primary">Load</button>
+              </form>
+            )}
+          </div>
+          {loading ? <div className="loading-panel">Loading sales...</div> : filteredRows.length ? (
             <div className="data-wrap">
               <table className="data-table">
                 <thead><tr><th>Invoice</th><th>Date</th><th>Patient</th><th>Type</th><th>Mode</th><th>Total</th><th>Status</th><th>Action</th></tr></thead>
                 <tbody>
-                  {rows.map((sale) => (
+                  {filteredRows.map((sale) => (
                     <tr key={sale.id}>
                       <td data-label="Invoice"><strong>{sale.invoice_no}</strong></td>
                       <td data-label="Date">{fmtDate(sale.sold_at)}</td>

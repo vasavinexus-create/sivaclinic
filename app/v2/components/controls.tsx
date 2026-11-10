@@ -72,8 +72,8 @@ export function handleFormEnterKey(e: React.KeyboardEvent<HTMLElement>) {
   focusNextFormField(target);
 }
 
-export function Field({ name, label, type = "text", required, textarea, defaultValue, value, onChange, readOnly, placeholder }: { name: string; label: string; type?: string; required?: boolean; textarea?: boolean; defaultValue?: string | number | null; value?: string | number; onChange?: (event: any) => void; readOnly?: boolean; placeholder?: string }) {
-  return <label className="field"><span>{label}{required && <b> *</b>}</span>{textarea ? <textarea name={name} required={required} defaultValue={defaultValue ?? undefined} value={value} onChange={onChange} readOnly={readOnly} placeholder={placeholder}/> : <input name={name} type={type} required={required} defaultValue={defaultValue ?? undefined} value={value} onChange={onChange} readOnly={readOnly} placeholder={placeholder} step={type === "number" ? "0.01" : undefined}/>}</label>;
+export function Field({ name, label, type = "text", required, textarea, defaultValue, value, onChange, readOnly, placeholder, step, min, max }: { name: string; label: string; type?: string; required?: boolean; textarea?: boolean; defaultValue?: string | number | null; value?: string | number; onChange?: (event: any) => void; readOnly?: boolean; placeholder?: string; step?: string; min?: string | number; max?: string | number }) {
+  return <label className="field"><span>{label}{required && <b> *</b>}</span>{textarea ? <textarea name={name} required={required} defaultValue={defaultValue ?? undefined} value={value} onChange={onChange} readOnly={readOnly} placeholder={placeholder}/> : <input name={name} type={type} required={required} defaultValue={defaultValue ?? undefined} value={value} onChange={onChange} readOnly={readOnly} placeholder={placeholder} step={step ?? (type === "number" ? "0.01" : undefined)} min={min} max={max}/>}</label>;
 }
 
 export function FormPanel({ title, subtitle, children, onSubmit }: { title: string; subtitle: string; children: React.ReactNode; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {

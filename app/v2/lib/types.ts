@@ -17,17 +17,61 @@ export type Organization = {
   pharmacy_name: string | null;
   active?: boolean | null;
   phone?: string | null;
+  email?: string | null;
   address?: string | null;
   gst_number?: string | null;
   drug_license_number?: string | null;
   sales_gst_mode?: string | null;
   sales_discount_percent?: number | null;
+  min_discount_medicine_value?: number | null;
   gemini_api_key?: string | null;
   groq_api_key?: string | null;
   gemini_model?: string | null;
   print_prescription?: boolean | null;
   print_bill?: boolean | null;
 };
+
+export function parseSalesGstMode(raw?: string | null): { mode: "price_plus_gst" | "price_only"; minDiscountValue: number } {
+  if (!raw) return { mode: "price_plus_gst", minDiscountValue: 0 };
+  const parts = raw.split("|");
+  const mode = parts[0] === "price_only" ? "price_only" : "price_plus_gst";
+  let minDiscountValue = 0;
+  for (const part of parts.slice(1)) {
+    if (part.startsWith("min_val:")) {
+      minDiscountValue = Number(part.replace("min_val:", "")) || 0;
+    }
+  }
+  return { mode, minDiscountValue };
+}
+
+export function formatSalesGstMode(mode: string, minDiscountValue: number): string {
+  const cleanMode = mode === "price_only" ? "price_only" : "price_plus_gst";
+  return minDiscountValue > 0 ? `${cleanMode}|min_val:${minDiscountValue}` : cleanMode;
+}
+
+export function getBillingDiscountConfig(organizationId?: string | null, org?: Organization | null): { minDiscountValue: number } {
+  let storedVal: number | null = null;
+  if (typeof window !== "undefined" && organizationId) {
+    try {
+      const raw = window.localStorage.getItem(`mediflow_min_discount_val_${organizationId}`);
+      if (raw !== null && raw !== "") storedVal = Number(raw);
+    } catch {}
+  }
+
+  const parsedFromMode = org?.sales_gst_mode ? parseSalesGstMode(org.sales_gst_mode).minDiscountValue : 0;
+  const dbVal = org?.min_discount_medicine_value != null ? Number(org.min_discount_medicine_value) : parsedFromMode;
+
+  const finalVal = storedVal != null && !isNaN(storedVal) ? storedVal : dbVal;
+  return { minDiscountValue: finalVal || 0 };
+}
+
+export function saveBillingDiscountConfig(organizationId: string, minDiscountValue: number) {
+  if (typeof window !== "undefined" && organizationId) {
+    try {
+      window.localStorage.setItem(`mediflow_min_discount_val_${organizationId}`, String(minDiscountValue || 0));
+    } catch {}
+  }
+}
 
 export interface BillingPrintConfig {
   print_prescription: boolean;

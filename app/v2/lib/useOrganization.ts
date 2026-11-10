@@ -2,7 +2,7 @@
 
 import useSWR from "swr";
 import { supabase } from "../../../lib/supabase";
-import { getBillingPrintConfig, Organization, Profile } from "./types";
+import { getBillingDiscountConfig, getBillingPrintConfig, parseSalesGstMode, Organization, Profile } from "./types";
 
 export function useOrganization(organizationId?: string | null) {
   return useSWR(
@@ -15,7 +15,14 @@ export function useOrganization(organizationId?: string | null) {
         .single();
       if (error) throw error;
       const printCfg = getBillingPrintConfig(organizationId, data as Organization);
-      return { ...(data as Organization), ...printCfg } as Organization;
+      const discountCfg = getBillingDiscountConfig(organizationId, data as Organization);
+      const { mode } = parseSalesGstMode(data?.sales_gst_mode);
+      return {
+        ...(data as Organization),
+        sales_gst_mode: mode,
+        min_discount_medicine_value: discountCfg.minDiscountValue,
+        ...printCfg,
+      } as Organization;
     },
     { revalidateOnFocus: false, dedupingInterval: 60000 }
   );
