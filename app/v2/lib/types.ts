@@ -110,6 +110,20 @@ export function saveBillingPrintConfig(organizationId: string, config: BillingPr
   }
 }
 
+export function normalizeOrganization(rawOrg: any, organizationId?: string | null): Organization | null {
+  if (!rawOrg) return null;
+  const orgId = organizationId || rawOrg.id;
+  const printCfg = getBillingPrintConfig(orgId, rawOrg);
+  const discountCfg = getBillingDiscountConfig(orgId, rawOrg);
+  const { mode } = parseSalesGstMode(rawOrg?.sales_gst_mode);
+  return {
+    ...rawOrg,
+    sales_gst_mode: mode,
+    min_discount_medicine_value: discountCfg.minDiscountValue,
+    ...printCfg,
+  } as Organization;
+}
+
 // ─── Clinical ─────────────────────────────────────────────────────────────
 export interface Patient {
   id: string;

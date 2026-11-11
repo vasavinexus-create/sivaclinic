@@ -10,7 +10,7 @@ import { Organization, Profile, Row } from "../lib/types";
 import { AsyncSelect, Field, FormPanel, QuickPatientModal } from "./controls";
 
 function patientText(row: Row) {
-  return `${row.patient_id || ""} - ${row.name || ""}${row.mobile ? ` - ${row.mobile}` : ""}`;
+  return `${row.patient_id || ""} - ${row.name || ""}${row.mobile ? ` - ${row.mobile}` : ""}${row.address ? ` (${row.address})` : ""}`;
 }
 
 function doctorText(row: Row) {
@@ -19,12 +19,8 @@ function doctorText(row: Row) {
 
 function productText(row: Row) {
   const details: string[] = [];
-  if (row.product_id) details.push(String(row.product_id));
-  if (row.generic_name) details.push(String(row.generic_name));
   if (row.category) details.push(String(row.category));
-  if (row.sale_unit) details.push(`Unit: ${row.sale_unit}`);
-  const rate = Number(row.selling_rate || row.mrp || 0);
-  if (rate > 0) details.push(`Rate: ${money(rate)}`);
+  if (row.generic_name) details.push(String(row.generic_name));
   return `${row.name || ""}${details.length > 0 ? ` (${details.join(" • ")})` : ""}`;
 }
 
@@ -39,6 +35,7 @@ export type PrescriptionItem = {
   product_code?: string;
   name: string;
   category?: string;
+  box_number?: string;
   qty: number;
   morning: boolean;
   afternoon: boolean;
@@ -452,23 +449,45 @@ export function PreExaminationWorkflow({ profile, notify }: { profile: Profile; 
   const loadTodayQueue = async () => {
     if (!supabase) return;
     const todayStr = todayDateString();
-    const { data } = await supabase
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startIso = startOfDay.toISOString();
+
+    const { data, error } = await supabase
       .from("consultations")
-      .select("id,patient_id,doctor_id,visited_at,symptoms,diagnosis,vitals,doctor_fee,patient:patients(id,patient_id,name,mobile),doctor:doctors(id,doctor_id,name)")
+      .select("id,patient_id,doctor_id,visited_at,symptoms,diagnosis,vitals,doctor_fee,patient:patients(id,patient_id,name,mobile,address),doctor:doctors(id,doctor_id,name)")
       .eq("organization_id", profile.organization_id)
-      .gte("visited_at", `${todayStr}T00:00:00`)
+      .or(`visited_at.gte.${startIso},visited_at.gte.${todayStr}T00:00:00`)
       .order("visited_at", { ascending: false })
       .limit(200);
 
+    // Background cleanup of past abandoned pre-examination tokens (no fee, no rx notes)
+    supabase
+      .from("consultations")
+      .delete()
+      .eq("organization_id", profile.organization_id)
+      .eq("doctor_fee_collected", false)
+      .is("doctor_fee_collected_bill_id", null)
+      .is("prescription_notes", null)
+      .lt("visited_at", `${todayStr}T00:00:00`)
+      .then(() => {});
+
+    if (error) {
+      console.error("loadTodayQueue error:", error);
+    }
     const rows = data || [];
     setTodayQueue(rows);
     if (!editingId) {
       const maxToken = rows.reduce((max, r) => {
-        const raw = String(r.vitals?.token_no || "").replace(/[^0-9]/g, "");
+        const v = typeof r.vitals === "string" ? (() => { try { return JSON.parse(r.vitals); } catch { return {}; } })() : (r.vitals || {});
+        const raw = String(v.token_no || "").replace(/[^0-9]/g, "");
         const num = Number(raw);
         return Number.isFinite(num) && num > max ? num : max;
       }, 0);
-      setTokenNo(String(maxToken + 1));
+      setTokenNo((prev) => {
+        const current = Number(prev) || 0;
+        return String(Math.max(current, maxToken + 1));
+      });
     }
   };
 
@@ -478,12 +497,20 @@ export function PreExaminationWorkflow({ profile, notify }: { profile: Profile; 
     if (!window.confirm(`Are you sure you want to remove Token #${tNo} for ${pName}?`)) return;
     if (!supabase) return;
     try {
-      const { error } = await supabase
-        .from("consultations")
-        .delete()
-        .eq("id", row.id)
-        .eq("organization_id", profile.organization_id);
-      if (error) throw error;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      const res = await fetch(`/api/v2/consultations?id=${row.id}`, {
+        method: "DELETE",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json.error || `HTTP ${res.status}`);
+      }
+
+      setTodayQueue((prev) => prev.filter((r) => r.id !== row.id));
       notify(`Token #${tNo} removed successfully`);
       if (editingId === row.id) {
         setEditingId(null);
@@ -578,6 +605,7 @@ export function PreExaminationWorkflow({ profile, notify }: { profile: Profile; 
         if (error) throw error;
         notify(`Updated Pre-Examination for Token #${tokenNo.trim()}`);
       } else {
+        const currentTokenNum = Number(tokenNo.trim().replace(/[^0-9]/g, "")) || 0;
         const { error } = await supabase.from("consultations").insert({
           organization_id: profile.organization_id,
           patient_id: patientId,
@@ -590,6 +618,7 @@ export function PreExaminationWorkflow({ profile, notify }: { profile: Profile; 
         });
         if (error) throw error;
         notify(`Token #${tokenNo.trim()} generated and Pre-Examination saved`);
+        setTokenNo(String(currentTokenNum + 1));
       }
 
       setEditingId(null);
@@ -751,8 +780,8 @@ export function PreExaminationWorkflow({ profile, notify }: { profile: Profile; 
 
               <AsyncSelect
                 table="patients"
-                select="id,patient_id,name,mobile"
-                searchColumns={["patient_id", "name", "mobile"]}
+                select="id,patient_id,name,mobile,address"
+                searchColumns={["patient_id", "name", "mobile", "address"]}
                 label="Patient"
                 value={patientId}
                 displayValue={patientLabel}
@@ -1002,13 +1031,17 @@ export function ConsultationWorkflow({
   const fetchTodayTokens = async () => {
     if (!supabase) return;
     const todayStr = todayDateString();
-    const { data } = await supabase
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startIso = startOfDay.toISOString();
+    const { data, error } = await supabase
       .from("consultations")
       .select("id,patient_id,doctor_id,visited_at,symptoms,diagnosis,clinical_notes,prescription_notes,follow_up_date,doctor_fee,vitals,patient:patients(id,patient_id,name,mobile,medical_notes),doctor:doctors(id,doctor_id,name,default_fee)")
       .eq("organization_id", profile.organization_id)
-      .gte("visited_at", `${todayStr}T00:00:00`)
+      .or(`visited_at.gte.${startIso},visited_at.gte.${todayStr}T00:00:00`)
       .order("visited_at", { ascending: false })
       .limit(200);
+    if (error) console.error("fetchTodayTokens error:", error);
     setTodayTokens(data || []);
   };
 
@@ -1228,6 +1261,7 @@ export function ConsultationWorkflow({
       product_code: rxProductRow.product_id || "",
       name: rxProductRow.name || "",
       category: rxProductRow.category || "",
+      box_number: rxProductRow.box_number || "",
       qty: qtyNum,
       morning: rxMorning,
       afternoon: rxAfternoon,
@@ -1243,6 +1277,7 @@ export function ConsultationWorkflow({
     setRxAfternoon(false);
     setRxEvening(false);
     setRxNight(true);
+    setRxFood("After Food");
     setRxDays("");
     setRxQty("10");
   };
@@ -1297,6 +1332,7 @@ export function ConsultationWorkflow({
           product_code: rxProductRow.product_id || "",
           name: rxProductRow.name || "",
           category: rxProductRow.category || "",
+          box_number: rxProductRow.box_number || "",
           qty: Number(rxQty),
           morning: rxMorning,
           afternoon: rxAfternoon,
@@ -1423,6 +1459,7 @@ export function ConsultationWorkflow({
       setRxItems([]);
       setRxProductId("");
       setRxProductRow(null);
+      setRxFood("After Food");
       setSelectedImageFiles([]);
       fetchTodayTokens();
     } catch (e: any) {
@@ -1716,6 +1753,7 @@ export function ConsultationWorkflow({
                   setRxItems([]);
                   setRxProductId("");
                   setRxProductRow(null);
+                  setRxFood("After Food");
                   setSelectedImageFiles([]);
                   setPatientId("");
                   setPatientLabel("");
@@ -1766,14 +1804,26 @@ export function ConsultationWorkflow({
                           e.stopPropagation();
                           if (!window.confirm(`Are you sure you want to remove waiting Token #${t.vitals?.token_no} for ${t.patient?.name || "Patient"}?`)) return;
                           if (!supabase) return;
-                          const { error } = await supabase.from("consultations").delete().eq("id", t.id).eq("organization_id", profile.organization_id);
-                          if (!error) {
-                            notify(`Token #${t.vitals?.token_no} removed`);
-                            if (activeConsultationId === t.id) {
-                              setActiveConsultationId(null);
-                              setTokenLookupInput("");
+                          try {
+                            const { data: sessionData } = await supabase.auth.getSession();
+                            const token = sessionData?.session?.access_token;
+                            const res = await fetch(`/api/v2/consultations?id=${t.id}`, {
+                              method: "DELETE",
+                              headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                            });
+                            const json = await res.json().catch(() => ({}));
+                            if (res.ok) {
+                              notify(`Token #${t.vitals?.token_no} removed`);
+                              if (activeConsultationId === t.id) {
+                                setActiveConsultationId(null);
+                                setTokenLookupInput("");
+                              }
+                              fetchTodayTokens();
+                            } else {
+                              notify(`Failed to remove token: ${json.error || "Error"}`);
                             }
-                            fetchTodayTokens();
+                          } catch (err: any) {
+                            notify(err.message || "Failed to remove token");
                           }
                         }}
                         title="Remove / Cancel this waiting token"
@@ -1802,8 +1852,8 @@ export function ConsultationWorkflow({
             <div style={{ width: "100%", marginBottom: "14px" }}>
               <AsyncSelect
                 table="patients"
-                select="id,patient_id,name,mobile,medical_notes"
-                searchColumns={["patient_id", "name", "mobile"]}
+                select="id,patient_id,name,mobile,address,medical_notes"
+                searchColumns={["patient_id", "name", "mobile", "address"]}
                 label="Patient"
                 value={patientId}
                 displayValue={patientLabel}
@@ -1907,8 +1957,8 @@ export function ConsultationWorkflow({
               <div style={{ width: "100%", marginBottom: "12px" }}>
                 <AsyncSelect
                   table="products"
-                  select="id,product_id,name,generic_name,category,sale_unit,mrp,selling_rate"
-                  searchColumns={["product_id", "name", "generic_name", "category", "barcode"]}
+                  select="id,product_id,name,generic_name,category,box_number,sale_unit,mrp,selling_rate"
+                  searchColumns={["name", "category", "generic_name", "product_id", "barcode", "box_number"]}
                   label="Select Product / Medicine"
                   value={rxProductId}
                   displayValue={rxProductRow ? productText(rxProductRow) : undefined}
@@ -1962,12 +2012,23 @@ export function ConsultationWorkflow({
                 </div>
 
                 <label className="field" style={{ margin: 0, minWidth: 0 }}>
-                  <span style={{ whiteSpace: "nowrap" }}>Before/After Food</span>
-                  <select value={rxFood} onChange={(e) => setRxFood(e.currentTarget.value)}>
+                  <span style={{ whiteSpace: "nowrap" }}>Timing / Food</span>
+                  <select
+                    value={rxFood}
+                    onChange={(e) => {
+                      const val = e.currentTarget.value;
+                      setRxFood(val);
+                      if (val === "STAT") {
+                        if (!rxDays || rxDays === "0") setRxDays("1");
+                        if (rxQty === "10" || !rxQty || rxQty === "0") setRxQty("1");
+                      }
+                    }}
+                  >
                     <option value="After Food">After Food</option>
                     <option value="Before Food">Before Food</option>
-                    <option value="With Food">With Food</option>
                     <option value="Anytime">Anytime</option>
+                    <option value="STAT">STAT</option>
+                    <option value="With Food">With Food</option>
                   </select>
                 </label>
 
@@ -2019,7 +2080,7 @@ export function ConsultationWorkflow({
                       <tr>
                         <th>Medicine</th>
                         <th>Timing</th>
-                        <th>Food</th>
+                        <th>Timing / Food</th>
                         <th>Days</th>
                         <th>Quantity</th>
                         <th></th>
@@ -2076,12 +2137,25 @@ export function ConsultationWorkflow({
                                 ))}
                               </div>
                             </td>
-                            <td data-label="Food">
-                              <select value={item.food} onChange={(e) => updateRxItem(idx, { food: e.currentTarget.value })} style={{ padding: "4px 6px", borderRadius: "6px", border: "1px solid #cbd5e1" }}>
+                            <td data-label="Food / Timing">
+                              <select
+                                value={item.food}
+                                onChange={(e) => {
+                                  const val = e.currentTarget.value;
+                                  const patch: Partial<PrescriptionItem> = { food: val };
+                                  if (val === "STAT") {
+                                    if (!item.days || item.days === "0") patch.days = "1";
+                                    if (item.qty === 10 || !item.qty) patch.qty = 1;
+                                  }
+                                  updateRxItem(idx, patch);
+                                }}
+                                style={{ padding: "4px 6px", borderRadius: "6px", border: "1px solid #cbd5e1" }}
+                              >
                                 <option value="After Food">After Food</option>
                                 <option value="Before Food">Before Food</option>
-                                <option value="With Food">With Food</option>
                                 <option value="Anytime">Anytime</option>
+                                <option value="STAT">STAT</option>
+                                <option value="With Food">With Food</option>
                               </select>
                             </td>
                             <td data-label="Days">

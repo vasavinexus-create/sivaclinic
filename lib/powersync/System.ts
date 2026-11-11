@@ -9,12 +9,27 @@ export const powerSync = new PowerSyncDatabase({
   schema: AppSchema,
   logger: {
     log(record) {
-      if (record.level >= 40 && !record.message?.includes('Sync error')) {
+      const msg = record.message || '';
+      const errStr = String(record.error ?? '');
+      // Suppress routine lifecycle aborts when reconnecting or switching auth
+      if (
+        msg.includes('Sync aborted') ||
+        msg.includes('Sync error') ||
+        errStr.includes('Connection request has been aborted') ||
+        errStr.includes('Disconnect has been requested')
+      ) {
+        return;
+      }
+      if (record.level >= 40) {
         console.warn(`[PowerSync]: ${record.message}`, record.error ?? '');
       }
     }
   }
 });
+
+if (typeof window !== 'undefined') {
+  (window as any).powerSync = powerSync;
+}
 
 export const connector = new SupabaseConnector();
 

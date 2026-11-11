@@ -10,6 +10,7 @@ import { ExpenseWorkflow, LedgerCreationWorkflow, LedgerGroupWorkflow } from "./
 import { DeletedBillsAuditWorkflow } from "./components/AuditWorkflows";
 import { ConsultationWorkflow, FollowUpWorkflow, PatientHistoryWorkflow, PreExaminationWorkflow } from "./components/ClinicalWorkflows";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { PatientsWorkflow } from "./components/PatientsWorkflow";
 import { handleFormEnterKey } from "./components/controls";
 import PagedCrud from "./components/PagedCrud";
 import { InpatientPaymentWorkflow, SupplierPaymentWorkflow } from "./components/PaymentWorkflows";
@@ -32,7 +33,7 @@ import UsersPage from "../components/UsersPage";
 import FinancialReports from "../components/FinancialReports";
 import { ClinicManagementWorkflow } from "./components/V1ClinicManagement";
 import { getV2Module, v2Nav } from "./lib/modules";
-import { Organization, Profile } from "./lib/types";
+import { normalizeOrganization, Organization, Profile } from "./lib/types";
 import { PausedClinicPaymentScreen } from "./lib/clinic-payment";
 import { money } from "./lib/format";
 import { getEffectiveStock } from "../../lib/inventory-stock";
@@ -206,13 +207,15 @@ function V2Dashboard({ profile }: { profile: Profile }) {
       supabase.from("expenses").select("amount").eq("organization_id", profile.organization_id),
     ]).then(([patients, medicines, sales, purchases, stock, expenses]) => {
       setStats({
-        patients: patients.count || 0,
-        medicines: medicines.count || 0,
-        sales: (sales.data || []).reduce((sum, row: any) => sum + Number(row.grand_total || 0), 0),
-        purchases: (purchases.data || []).reduce((sum, row: any) => sum + Number(row.invoice_total || 0), 0),
-        stock: (stock.data || []).reduce((sum, row: any) => sum + getEffectiveStock(row), 0),
-        expenses: (expenses.data || []).reduce((sum, row: any) => sum + Number(row.amount || 0), 0),
+        patients: patients?.count || 0,
+        medicines: medicines?.count || 0,
+        sales: (sales?.data || []).reduce((sum: number, row: any) => sum + Number(row.grand_total || 0), 0),
+        purchases: (purchases?.data || []).reduce((sum: number, row: any) => sum + Number(row.invoice_total || 0), 0),
+        stock: (stock?.data || []).reduce((sum: number, row: any) => sum + getEffectiveStock(row), 0),
+        expenses: (expenses?.data || []).reduce((sum: number, row: any) => sum + Number(row.amount || 0), 0),
       });
+    }).catch((err) => {
+      console.warn("Failed to load dashboard metrics:", err);
     });
   }, [profile.organization_id]);
   return (
@@ -254,7 +257,7 @@ type PageProps = {
 
 // ─── PAGE REGISTRY — industry-standard route map (replaces nested ternary) ──
 const PAGE_REGISTRY: Record<string, any> = {
-  
+  patients:                 PatientsWorkflow,
   "pre-examination":        PreExaminationWorkflow,
   "consultation":           ConsultationWorkflow,
   "patient-history":        PatientHistoryWorkflow,
@@ -353,9 +356,11 @@ export default function V2App({ pageKey = "dashboard" }: { pageKey?: string }) {
   // Auth
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
-    supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession));
-    return () => data.subscription.unsubscribe();
+    supabase.auth.getSession()
+      .then((res) => setSession(res?.data?.session || null))
+      .catch(() => setSession(null));
+    const subRes = supabase.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession));
+    return () => subRes?.data?.subscription?.unsubscribe();
   }, []);
 
   // Profile
@@ -363,7 +368,10 @@ export default function V2App({ pageKey = "dashboard" }: { pageKey?: string }) {
     if (!session || !supabase) { setProfile(null); return; }
     supabase.from("profiles").select("id,organization_id,full_name,role,active")
       .eq("id", session.user.id).single()
-      .then(({ data }) => setProfile(data as Profile || null));
+      .then(
+        (res) => setProfile((res?.data as Profile) || null),
+        () => setProfile(null)
+      );
   }, [session]);
 
   // Organization
@@ -376,10 +384,13 @@ export default function V2App({ pageKey = "dashboard" }: { pageKey?: string }) {
     setOrgLoaded(false);
     supabase.from("organizations").select("*")
       .eq("id", profile.organization_id).single()
-      .then(({ data }) => {
-        setOrganization(data as Organization || null);
-        setOrgLoaded(true);
-      });
+      .then(
+        (res) => {
+          setOrganization(normalizeOrganization(res?.data, profile.organization_id));
+          setOrgLoaded(true);
+        },
+        () => setOrgLoaded(true)
+      );
   }, [profile]);
 
   // Page permissions
@@ -394,19 +405,26 @@ export default function V2App({ pageKey = "dashboard" }: { pageKey?: string }) {
     }
     // Clinic users: strictly load user-wise page permissions
     supabase.from("page_permissions").select("page_key").eq("profile_id", profile.id)
-      .then(({ data, error }) => {
-        if (!alive) return;
-        if (error) { setAccessError(error.message); return; }
-        if (data && data.length > 0) {
-          setAllowedPages(data.map(row => row.page_key).filter(p => p !== "Clinic Management"));
-        } else {
-          // Fallback if no user-wise permissions have been configured yet
-          const fallback = profile.role === "admin"
-            ? allPageLabels
-            : (rolePages[profile.role] || ["Dashboard"]);
-          setAllowedPages(fallback.filter(p => p !== "Clinic Management"));
+      .then(
+        (res) => {
+          if (!alive) return;
+          if (res?.error) { setAccessError(res.error.message); return; }
+          const data = res?.data;
+          if (data && data.length > 0) {
+            setAllowedPages(data.map((row: any) => row.page_key).filter((p: string) => p !== "Clinic Management"));
+          } else {
+            // Fallback if no user-wise permissions have been configured yet
+            const fallback = profile.role === "admin"
+              ? allPageLabels
+              : (rolePages[profile.role] || ["Dashboard"]);
+            setAllowedPages(fallback.filter((p: string) => p !== "Clinic Management"));
+          }
+        },
+        (err: any) => {
+          if (!alive) return;
+          setAccessError(err?.message || "Failed to load permissions");
         }
-      });
+      );
     return () => { alive = false; };
   }, [profile]);
 
@@ -421,12 +439,12 @@ export default function V2App({ pageKey = "dashboard" }: { pageKey?: string }) {
         organization={organization}
         onRefreshStatus={async () => {
           if (!supabase) return;
-          const [{ data: nextProf }, { data: nextOrg }] = await Promise.all([
+          const [profRes, orgRes] = await Promise.all([
             supabase.from("profiles").select("id,organization_id,full_name,role,active").eq("id", profile.id).single(),
             supabase.from("organizations").select("*").eq("id", profile.organization_id).single(),
           ]);
-          if (nextProf) setProfile(nextProf as Profile);
-          if (nextOrg) setOrganization(nextOrg as Organization);
+          if (profRes?.data) setProfile(profRes.data as Profile);
+          if (orgRes?.data) setOrganization(normalizeOrganization(orgRes.data, profile.organization_id));
         }}
         onSignOut={() => supabase?.auth.signOut()}
       />

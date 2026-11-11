@@ -456,6 +456,7 @@ export function QuickPatientModal({
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("Male");
   const [mobile, setMobile] = useState("");
+  const [address, setAddress] = useState("");
 
   const orgId = organizationId || profile?.organization_id || "";
 
@@ -476,8 +477,9 @@ export function QuickPatientModal({
           age: age ? Number(age) : null,
           gender: gender || null,
           mobile: mobile.trim() || null,
+          address: address.trim() || null,
         })
-        .select("id,patient_id,name,age,gender,mobile")
+        .select("id,patient_id,name,age,gender,mobile,address")
         .single();
 
       if (error || !created) throw error || new Error("Failed to create patient");
@@ -488,6 +490,7 @@ export function QuickPatientModal({
       setName("");
       setAge("");
       setMobile("");
+      setAddress("");
     } catch (err: any) {
       notify(err.message || "Could not create patient");
     } finally {
@@ -552,6 +555,14 @@ export function QuickPatientModal({
                   value={mobile}
                   onChange={(e) => setMobile(e.currentTarget.value)}
                   placeholder="10-digit mobile"
+                />
+              </label>
+              <label className="field" style={{ gridColumn: "1 / -1" }}>
+                <span>Address</span>
+                <input
+                  value={address}
+                  onChange={(e) => setAddress(e.currentTarget.value)}
+                  placeholder="Street / Area / Village / Town"
                 />
               </label>
             </div>

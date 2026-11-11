@@ -103,3 +103,105 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseServiceKey) {
+      return NextResponse.json({ error: "Server missing SUPABASE_SERVICE_ROLE_KEY configuration." }, { status: 500 });
+    }
+
+    const adminClient = createClient(supabaseUrl, supabaseServiceKey);
+
+    let user;
+    const authHeader = request.headers.get("Authorization");
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1];
+      const { data: authData } = await adminClient.auth.getUser(token);
+      user = authData?.user;
+    }
+
+    if (!user) {
+      const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+        cookies: {
+          getAll: () => request.cookies.getAll(),
+          setAll: () => {},
+        },
+      });
+      const { data: { session } } = await supabase.auth.getSession();
+      user = session?.user;
+    }
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { data: profile } = await adminClient
+      .from("profiles")
+      .select("id, organization_id, role, active")
+      .eq("id", user.id)
+      .single();
+
+    if (!profile?.active) return NextResponse.json({ error: "Account is inactive" }, { status: 403 });
+
+    const { searchParams } = new URL(request.url);
+    let consultationId = searchParams.get("id");
+    if (!consultationId) {
+      try {
+        const body = await request.json();
+        consultationId = body?.id;
+      } catch {}
+    }
+
+    if (!consultationId) {
+      return NextResponse.json({ error: "Missing consultation id" }, { status: 400 });
+    }
+
+    // Verify consultation exists and belongs to organization
+    const { data: targetConsultation, error: fetchErr } = await adminClient
+      .from("consultations")
+      .select("id, organization_id")
+      .eq("id", consultationId)
+      .eq("organization_id", profile.organization_id)
+      .single();
+
+    if (fetchErr || !targetConsultation) {
+      return NextResponse.json({ error: "Consultation not found or access denied" }, { status: 404 });
+    }
+
+    // Clean up dependent attachments if any
+    await adminClient
+      .from("prescription_attachments")
+      .delete()
+      .eq("consultation_id", consultationId)
+      .eq("organization_id", profile.organization_id);
+
+    // Unlink sales if any reference exists
+    await adminClient
+      .from("sales")
+      .update({ consultation_id: null })
+      .eq("consultation_id", consultationId)
+      .eq("organization_id", profile.organization_id);
+
+    // Delete consultation
+    const { data: deleted, error: delErr } = await adminClient
+      .from("consultations")
+      .delete()
+      .eq("id", consultationId)
+      .eq("organization_id", profile.organization_id)
+      .select("id");
+
+    if (delErr) {
+      throw delErr;
+    }
+
+    return NextResponse.json({ success: true, data: deleted });
+  } catch (error: any) {
+    console.error("Consultations DELETE API Error:", error);
+    return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 });
+  }
+}
+

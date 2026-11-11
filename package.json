@@ -7,7 +7,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_OPTIONS=--max-old-space-size=4096 next dev -p 3002",
+    "dev": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_PATH=./node_modules next dev -p 3002 --webpack",
+    "dev:turbo": "cross-env NODE_TLS_REJECT_UNAUTHORIZED=0 NODE_PATH=./node_modules next dev -p 3002 --turbopack",
     "build": "next build",
     "start": "next start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",

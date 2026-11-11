@@ -3,22 +3,26 @@
 import { Capacitor } from "@capacitor/core";
 
 import { useEffect, useState } from "react";
+import { mutate as globalMutate } from "swr";
 import { CheckCircle2, LoaderCircle, Plus, Trash2, RefreshCw, X, AlertCircle } from "lucide-react";
 import { supabase } from "../../../lib/supabase";
 import { applyBillDiscountRule, deductSaleItemStock, fetchBillingRatePreview, resolveBillingBatchesForProduct } from "../../../lib/inventory-stock";
 import { money } from "../lib/format";
 import { postJournal } from "../lib/accounting";
-import { getBillingPrintConfig, Organization, Profile, Row } from "../lib/types";
+import { getBillingDiscountConfig, getBillingPrintConfig, parseSalesGstMode, Organization, Profile, Row } from "../lib/types";
 import { AsyncSelect, Field, QuickPatientModal } from "./controls";
 import { SalesWorkflow as SalesRegisterWorkflow } from "./SalesWorkflows";
 import { triggerUniversalPrint } from "../lib/print";
 
 function productText(row: Row) {
-  return `${row.name || ""}`;
+  const details: string[] = [];
+  if (row.category) details.push(String(row.category));
+  if (row.generic_name) details.push(String(row.generic_name));
+  return `${row.name || ""}${details.length > 0 ? ` (${details.join(" • ")})` : ""}`;
 }
 
 function patientText(row: Row) {
-  return `${row.patient_id || ""} - ${row.name || ""}${row.mobile ? ` - ${row.mobile}` : ""}`;
+  return `${row.patient_id || ""} - ${row.name || ""}${row.mobile ? ` - ${row.mobile}` : ""}${row.address ? ` (${row.address})` : ""}`;
 }
 
 const todayInput = () => {
@@ -78,7 +82,7 @@ export function PrintableInvoice({
           {mobile ? `Phone: ${mobile}` : ""}
         </div>
         <div className="invoice-info">
-          <h2>{title || "TAX INVOICE"}</h2>
+          <h2>{title || (cart.length === 0 && pendingFee > 0 ? "CONSULTATION FEE RECEIPT" : "TAX INVOICE")}</h2>
           <strong>Invoice No:</strong> {invoiceNo || "Draft"}<br />
           <strong>Date:</strong> {date ? new Date(date).toLocaleString() : new Date().toLocaleString()}
         </div>
@@ -88,7 +92,7 @@ export function PrintableInvoice({
         <thead>
           <tr>
             <th>S.No</th>
-            <th>Item / Medicine</th>
+            <th>Item / Description</th>
             <th>Batch</th>
             <th className="right">Qty</th>
             <th className="right">MRP</th>
@@ -99,46 +103,68 @@ export function PrintableInvoice({
           </tr>
         </thead>
         <tbody>
-          {cart.map((item: any, i: number) => {
-            const mrpRate = Number(item.mrp_unit_rate || item.mrp || item.original_selling_rate || item.selling_rate || 0);
-            const discountPercent = Number(item.sales_discount_percent ?? item.original_sales_discount_percent ?? 0);
-            const sellingRate = Number(item.selling_rate || 0);
-            const qtyVal = Number(item.qty || 0);
-            return (
-              <tr key={i}>
-                <td>{i + 1}</td>
-                <td>{item.name}</td>
-                <td>{item.batch_number}</td>
-                <td className="right">{qtyVal}</td>
-                <td className="right">{mrpRate.toFixed(2)}</td>
-                <td className="right">{discountPercent}%</td>
-                <td className="right">{sellingRate.toFixed(2)}</td>
-                <td className="right">{item.gst_percent || 0}%</td>
-                <td className="right">{(sellingRate * qtyVal).toFixed(2)}</td>
-              </tr>
-            );
-          })}
+          {cart.length > 0 ? (
+            cart.map((item: any, i: number) => {
+              const mrpRate = Number(item.mrp_unit_rate || item.mrp || item.original_selling_rate || item.selling_rate || 0);
+              const discountPercent = Number(item.sales_discount_percent ?? item.original_sales_discount_percent ?? 0);
+              const sellingRate = Number(item.selling_rate || 0);
+              const qtyVal = Number(item.qty || 0);
+              return (
+                <tr key={i}>
+                  <td>{i + 1}</td>
+                  <td>{item.name}</td>
+                  <td>{item.batch_number}</td>
+                  <td className="right">{qtyVal}</td>
+                  <td className="right">{mrpRate.toFixed(2)}</td>
+                  <td className="right">{discountPercent}%</td>
+                  <td className="right">{sellingRate.toFixed(2)}</td>
+                  <td className="right">{item.gst_percent || 0}%</td>
+                  <td className="right">{(sellingRate * qtyVal).toFixed(2)}</td>
+                </tr>
+              );
+            })
+          ) : (
+            <tr>
+              <td>1</td>
+              <td><strong>Doctor Consultation Fee</strong></td>
+              <td>-</td>
+              <td className="right">1</td>
+              <td className="right">{Number(pendingFee || 0).toFixed(2)}</td>
+              <td className="right">0%</td>
+              <td className="right">{Number(pendingFee || 0).toFixed(2)}</td>
+              <td className="right">0%</td>
+              <td className="right">{Number(pendingFee || 0).toFixed(2)}</td>
+            </tr>
+          )}
         </tbody>
       </table>
 
       <table className="print-totals">
         <tbody>
-          <tr>
-            <td>Subtotal:</td>
-            <td>{medicine.toFixed(2)}</td>
-          </tr>
-          {tax > 0 && <tr>
-            <td>Tax (GST):</td>
-            <td>{tax.toFixed(2)}</td>
-          </tr>}
-          {specialDiscountAmount > 0 && <tr>
-            <td>Special Discount:</td>
-            <td>-{specialDiscountAmount.toFixed(2)}</td>
-          </tr>}
-          {pendingFee > 0 && <tr>
-            <td>Pending Doctor Fee:</td>
-            <td>{pendingFee.toFixed(2)}</td>
-          </tr>}
+          {medicine > 0 && (
+            <tr>
+              <td>Medicine Subtotal:</td>
+              <td>{medicine.toFixed(2)}</td>
+            </tr>
+          )}
+          {tax > 0 && (
+            <tr>
+              <td>Tax (GST):</td>
+              <td>{tax.toFixed(2)}</td>
+            </tr>
+          )}
+          {specialDiscountAmount > 0 && (
+            <tr>
+              <td>Special Discount:</td>
+              <td>-{specialDiscountAmount.toFixed(2)}</td>
+            </tr>
+          )}
+          {pendingFee > 0 && (
+            <tr>
+              <td>Doctor Consultation Fee:</td>
+              <td>{Number(pendingFee).toFixed(2)}</td>
+            </tr>
+          )}
           <tr className="total-row">
             <td>Grand Total:</td>
             <td>{(total + pendingFee).toFixed(2)}</td>
@@ -401,11 +427,16 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
   const [loadingRx, setLoadingRx] = useState(false);
   const [refreshingRx, setRefreshingRx] = useState(false);
   const [productCategoryMap, setProductCategoryMap] = useState<Record<string, string>>({});
+  const [productBoxMap, setProductBoxMap] = useState<Record<string, string>>({});
 
-  const salesGstMode = organization?.sales_gst_mode || "price_plus_gst";
+  const parsedGst = parseSalesGstMode(organization?.sales_gst_mode);
+  const salesGstMode = parsedGst.mode;
   const isPriceOnly = salesGstMode === "price_only";
   const settingDiscount = Number(organization?.sales_discount_percent || 0);
-  const minDiscountThreshold = Number(organization?.min_discount_medicine_value || 0);
+  const minDiscountThreshold = Number(
+    organization?.min_discount_medicine_value ??
+    getBillingDiscountConfig(profile.organization_id, organization).minDiscountValue
+  );
   const printConfig = getBillingPrintConfig(profile.organization_id, organization);
 
   const fetchPendingPrescriptions = async (showNotice = false) => {
@@ -413,11 +444,14 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
     setRefreshingRx(true);
     try {
       const todayStr = todayInput();
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      const startIso = startOfDay.toISOString();
       const { data } = await supabase
         .from("consultations")
         .select("id,patient_id,doctor_id,visited_at,symptoms,diagnosis,clinical_notes,prescription_notes,follow_up_date,doctor_fee,doctor_fee_collected,vitals,patient:patients(id,patient_id,name,age,gender,mobile),doctor:doctors(id,name,qualification,specialization,registration_number)")
         .eq("organization_id", profile.organization_id)
-        .gte("visited_at", `${todayStr}T00:00:00`)
+        .or(`visited_at.gte.${startIso},visited_at.gte.${todayStr}T00:00:00`)
         .order("visited_at", { ascending: false })
         .limit(100);
 
@@ -470,8 +504,15 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       const productIds = rxItems.map((x) => x.product_id).filter(Boolean);
       const { data: prodRows } = await supabase
         .from("products")
-        .select("id,product_id,name,category,barcode,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit")
+        .select("id,product_id,name,category,box_number,barcode,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit")
         .in("id", productIds);
+      if (prodRows) {
+        setProductBoxMap((prev) => {
+          const next = { ...prev };
+          for (const p of prodRows) { if (p.id && p.box_number) next[p.id] = p.box_number; }
+          return next;
+        });
+      }
       const prodMap = new Map<string, Row>((prodRows || []).map((p: Row) => [p.id, p]));
 
       let workingCart: Row[] = replaceExisting ? [] : [...cart];
@@ -551,12 +592,12 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
     const items = activeRxConsultation.vitals?.prescription_items;
     if (!Array.isArray(items) || items.length === 0) return;
     const needFetchIds = items
-      .filter((x: any) => !x.category && x.product_id)
+      .filter((x: any) => (!x.category || !x.box_number) && x.product_id)
       .map((x: any) => x.product_id);
     if (!needFetchIds.length) return;
     supabase
       .from("products")
-      .select("id,category")
+      .select("id,category,box_number")
       .in("id", needFetchIds)
       .then(({ data }) => {
         if (!data) return;
@@ -567,6 +608,13 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
           }
           return next;
         });
+        setProductBoxMap((prev) => {
+          const next = { ...prev };
+          for (const p of data) {
+            if (p.id && p.box_number) next[p.id] = p.box_number;
+          }
+          return next;
+        });
       });
   }, [activeRxConsultation]);
 
@@ -574,11 +622,14 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
     const clean = rawToken.trim().replace(/^#|^T-/i, "");
     if (!clean || !supabase) return;
     const todayStr = todayInput();
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const startIso = startOfDay.toISOString();
     const { data } = await supabase
       .from("consultations")
-      .select("id,patient_id,doctor_id,visited_at,symptoms,diagnosis,clinical_notes,prescription_notes,follow_up_date,doctor_fee,vitals,patient:patients(id,patient_id,name,age,gender,mobile),doctor:doctors(id,name,qualification,specialization,registration_number)")
+      .select("id,patient_id,doctor_id,visited_at,symptoms,diagnosis,clinical_notes,prescription_notes,follow_up_date,doctor_fee,doctor_fee_collected,vitals,patient:patients(id,patient_id,name,age,gender,mobile,address),doctor:doctors(id,name,qualification,specialization,registration_number)")
       .eq("organization_id", profile.organization_id)
-      .gte("visited_at", `${todayStr}T00:00:00`)
+      .or(`visited_at.gte.${startIso},visited_at.gte.${todayStr}T00:00:00`)
       .order("visited_at", { ascending: false })
       .limit(100);
 
@@ -592,6 +643,9 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       setPatientId(pat.id);
       setPatientRow(pat);
       setActiveRxConsultation(matched);
+      if (Number(matched.doctor_fee || 0) > 0 && !matched.doctor_fee_collected) {
+        setPending((prev) => (prev.some((p) => p.id === matched.id) ? prev : [...prev, matched]));
+      }
       if (Array.isArray(matched.vitals?.prescription_items) && matched.vitals.prescription_items.length > 0) {
         loadPrescriptionItemsIntoCart(matched, true);
       }
@@ -778,11 +832,17 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
   };
 
   const save = async () => {
-    if (!supabase || !cart.length) {
-      notify("Add at least one medicine");
+    const feeConsultations = [...pending];
+    if (feeConsultations.length === 0 && activeRxConsultation && Number(activeRxConsultation.doctor_fee || 0) > 0 && !activeRxConsultation.doctor_fee_collected) {
+      feeConsultations.push(activeRxConsultation);
+    }
+    const fee = feeConsultations.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0);
+
+    if (!supabase || (!cart.length && fee <= 0)) {
+      notify("Add at least one medicine or select a patient with consultation fee");
       return;
     }
-    if (cart.some((item) => !item.qty || Number(item.qty) <= 0)) {
+    if (cart.length > 0 && cart.some((item) => !item.qty || Number(item.qty) <= 0)) {
       notify("Please fill out valid quantities for all medicines");
       return;
     }
@@ -791,24 +851,30 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       return;
     }
     setSaving(true);
-    const finalCart = applyBillDiscountRule(cart, minDiscountThreshold);
-    const fee = pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0);
+    const finalCart = cart.length > 0 ? applyBillDiscountRule(cart, minDiscountThreshold) : [];
     const invoice = `V2-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`;
     const hasRateEdit = finalCart.some((item) => item.rate_edited) || Number(specialDiscountPercent || 0) > 0;
-    const pharmacyRevenue = Math.max(0, medicine + tax - specialDiscountAmount);
+    const medicineSubtotal = finalCart.length > 0 ? medicine : 0;
+    const medicineTax = finalCart.length > 0 ? tax : 0;
+    const specialDiscAmount = finalCart.length > 0 ? specialDiscountAmount : 0;
+    const pharmacyRevenue = Math.max(0, medicineSubtotal + medicineTax - specialDiscAmount);
+    const medicineGrossTotal = finalCart.length > 0 ? grossTotal : 0;
+    const medicineTotal = finalCart.length > 0 ? total : 0;
+    const grandTotal = medicineTotal + fee;
+
     const { data: sale, error } = await supabase.from("sales").insert({
       organization_id: profile.organization_id,
       invoice_no: invoice,
       patient_id: patientId || null,
-      consultation_id: pending.length === 1 ? pending[0].id : (activeRxConsultation?.id || null),
-      medicine_subtotal: medicine,
-      medicine_tax: tax,
+      consultation_id: feeConsultations.length === 1 ? feeConsultations[0].id : (activeRxConsultation?.id || null),
+      medicine_subtotal: medicineSubtotal,
+      medicine_tax: medicineTax,
       pharmacy_revenue: pharmacyRevenue,
       doctor_fee: fee,
-      gross_total: grossTotal,
-      special_discount_percent: Number(specialDiscountPercent || 0),
-      special_discount_amount: specialDiscountAmount,
-      grand_total: total + fee,
+      gross_total: medicineGrossTotal,
+      special_discount_percent: finalCart.length > 0 ? Number(specialDiscountPercent || 0) : 0,
+      special_discount_amount: specialDiscAmount,
+      grand_total: grandTotal,
       payment_mode: paymentMode,
       has_rate_edit: hasRateEdit,
       rate_edit_verified: !hasRateEdit,
@@ -824,17 +890,44 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       await supabase
         .from("consultations")
         .update({
+          doctor_fee_collected: true,
+          doctor_fee_collected_bill_id: sale.id,
           vitals: { ...(activeRxConsultation.vitals || {}), rx_billed: true, billed_sale_id: sale.id },
+          updated_at: new Date().toISOString(),
         })
         .eq("id", activeRxConsultation.id)
         .eq("organization_id", profile.organization_id);
     }
-    for (const p of pending) {
-      await supabase.rpc("collect_consultation_fee", {
+    for (const p of feeConsultations) {
+      const { error: feeErr } = await supabase.rpc("collect_consultation_fee", {
         p_consultation_id: p.id,
-        p_sale_id: sale.id
+        p_sale_id: sale.id,
       });
+      if (feeErr) {
+        await supabase
+          .from("consultations")
+          .update({
+            doctor_fee_collected: true,
+            doctor_fee_collected_bill_id: sale.id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", p.id)
+          .eq("organization_id", profile.organization_id);
+      }
     }
+    if (patientId) {
+      await supabase
+        .from("consultations")
+        .update({
+          doctor_fee_collected: true,
+          doctor_fee_collected_bill_id: sale.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("patient_id", patientId)
+        .eq("organization_id", profile.organization_id)
+        .eq("doctor_fee_collected", false);
+    }
+    globalMutate((key) => typeof key === "string" && (key.includes("table:consultations") || key.includes("table:sales")));
     for (const item of finalCart) {
       await supabase.from("sale_items").insert({
         organization_id: profile.organization_id,
@@ -861,13 +954,21 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
         referenceType: "sale",
       });
     }
-    const collectedAmount = total + fee;
+    const collectedAmount = grandTotal;
     if (collectedAmount > 0) {
+      await supabase.from("payments").insert({
+        organization_id: profile.organization_id,
+        sale_id: sale.id,
+        patient_id: patientId || null,
+        amount: collectedAmount,
+        mode: paymentMode,
+        created_by: profile.id,
+      });
       await supabase.from("cash_ledger").insert({
         organization_id: profile.organization_id,
         occurred_at: new Date().toISOString(),
         entry_type: "receipt",
-        category: "Pharmacy sale",
+        category: fee > 0 && finalCart.length === 0 ? "Doctor consultation fee" : "Pharmacy sale",
         reference_type: "sale",
         reference_id: sale.id,
         amount: collectedAmount,
@@ -876,15 +977,18 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       });
     }
     try {
-      const netPharmacySales = Math.max(0, Number((total - tax).toFixed(2)));
-      const effectiveTax = Math.max(0, Number((total - netPharmacySales).toFixed(2)));
+      const netPharmacySales = finalCart.length > 0 ? Math.max(0, Number((medicineTotal - medicineTax).toFixed(2))) : 0;
+      const effectiveTax = finalCart.length > 0 ? Math.max(0, Number((medicineTotal - netPharmacySales).toFixed(2))) : 0;
       const lines: Array<{ ledger: string; debit?: number; credit?: number }> = [
-        { ledger: paymentMode === "cash" ? "Cash" : "Bank", debit: Number((total + fee).toFixed(2)) },
+        { ledger: paymentMode === "cash" ? "Cash" : "Bank", debit: Number(collectedAmount.toFixed(2)) },
       ];
       if (netPharmacySales > 0) lines.push({ ledger: "Pharmacy Sales", credit: netPharmacySales });
       if (effectiveTax > 0) lines.push({ ledger: "GST Payable", credit: effectiveTax });
       if (fee > 0) lines.push({ ledger: "Consultation Revenue", credit: Number(fee.toFixed(2)) });
-      await postJournal(profile, { voucherType: "sale", entryDate: new Date().toISOString(), referenceType: "sale", referenceId: sale.id, referenceNumber: invoice, narration: `Sale bill ${invoice} (${paymentMode.toUpperCase()})`, lines });
+      const narrationText = fee > 0 && finalCart.length === 0
+        ? `Consultation fee collection ${invoice} (${paymentMode.toUpperCase()})`
+        : `Sale bill ${invoice} (${paymentMode.toUpperCase()})`;
+      await postJournal(profile, { voucherType: "sale", entryDate: new Date().toISOString(), referenceType: "sale", referenceId: sale.id, referenceNumber: invoice, narration: narrationText, lines });
     } catch {}
     setLastSavedBill({
       patientName: patientRow?.name || "Walk-in Patient",
@@ -895,10 +999,10 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       invoiceNo: invoice,
       date: new Date().toISOString(),
       cart: [...finalCart],
-      medicine,
-      tax,
-      specialDiscountAmount,
-      total,
+      medicine: medicineSubtotal,
+      tax: medicineTax,
+      specialDiscountAmount: specialDiscAmount,
+      total: medicineTotal,
       pendingFee: fee,
     });
     setSaving(false);
@@ -913,7 +1017,9 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
     setQty(1);
     setRatePreview(null);
     fetchPendingPrescriptions();
-    notify(`${invoice} saved (${paymentMode.toUpperCase()})`);
+    notify(fee > 0 && finalCart.length === 0
+      ? `Consultation fee collected: ${money(fee)} (${paymentMode.toUpperCase()})`
+      : `${invoice} saved (${paymentMode.toUpperCase()})`);
     const latestPrintCfg = getBillingPrintConfig(profile.organization_id, organization);
     if (latestPrintCfg.print_prescription || latestPrintCfg.print_bill) {
       setTimeout(() => {
@@ -1180,6 +1286,7 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
                 <tr>
                   <th>Prescribed Medicine</th>
                   <th>Category</th>
+                  <th>Box No</th>
                   <th>Morning</th>
                   <th>Afternoon</th>
                   <th>Evening</th>
@@ -1192,6 +1299,7 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
               <tbody>
                 {activeRxConsultation.vitals.prescription_items.map((item: any, idx: number) => {
                   const cat = item.category || productCategoryMap[item.product_id] || "";
+                  const boxNo = item.box_number || productBoxMap[item.product_id] || "";
                   return (
                     <tr key={`${item.product_id}-${idx}`}>
                       <td><strong>{item.name}</strong></td>
@@ -1199,6 +1307,15 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
                         {cat ? (
                           <span style={{ fontSize: "11px", padding: "2px 8px", background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0", borderRadius: "12px", fontWeight: 600 }}>
                             {cat}
+                          </span>
+                        ) : (
+                          <span style={{ color: "#94a3b8" }}>-</span>
+                        )}
+                      </td>
+                      <td>
+                        {boxNo ? (
+                          <span style={{ fontSize: "11px", padding: "2px 8px", background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a", borderRadius: "6px", fontWeight: 700 }}>
+                            {boxNo}
                           </span>
                         ) : (
                           <span style={{ color: "#94a3b8" }}>-</span>
@@ -1228,8 +1345,8 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
     <div className="billing-entry-line">
       <AsyncSelect
         table="products"
-        select="id,product_id,name,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit"
-        searchColumns={["product_id", "name", "barcode", "generic_name"]}
+        select="id,product_id,name,category,generic_name,box_number,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit"
+        searchColumns={["name", "category", "generic_name", "product_id", "barcode", "box_number"]}
         label="Add / Edit Medicine (or Direct Paper Rx Entry)"
         value={productId}
         onChange={(id, row) => {
@@ -1289,6 +1406,22 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
           </div>
         )}
 
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+          <span style={{ fontWeight: 700, fontSize: "14px", color: "#334155" }}>Billed Medicines ({cart.length})</span>
+          <button
+            type="button"
+            className="secondary danger-btn"
+            onClick={() => {
+              if (window.confirm("Remove all medicines from cart? (You can still collect Doctor Consultation Fee)")) {
+                setCart([]);
+              }
+            }}
+            style={{ fontSize: "12px", padding: "4px 10px", display: "inline-flex", alignItems: "center", gap: "4px" }}
+            title="Clear all medicines if patient only pays consultation fee"
+          >
+            <Trash2 size={13} /> Clear Medicines (Fee Only)
+          </button>
+        </div>
         <div className="data-wrap">
           <table className="data-table billing-table">
             <thead>
@@ -1389,7 +1522,8 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
             </div>
           )}
           {(() => {
-            const doctorFeeTotal = pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0);
+            const doctorFeeTotal = pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0) ||
+              (activeRxConsultation && !activeRxConsultation.doctor_fee_collected ? Number(activeRxConsultation.doctor_fee || 0) : 0);
             const grandTotal = total + doctorFeeTotal;
             return (
               <div className="totals-mini" style={{ alignItems: "center" }}>
@@ -1437,12 +1571,95 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
           </button>
         </div>
       </>
-    ) : (
-      <div className="empty">
-        <h3>No medicines added.</h3>
-        <p>Select a patient/token to load doctor prescription, or add medicines directly from paper prescription.</p>
-      </div>
-    )}
+    ) : (() => {
+      const doctorFeeTotal = pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0) ||
+        (activeRxConsultation && !activeRxConsultation.doctor_fee_collected ? Number(activeRxConsultation.doctor_fee || 0) : 0);
+      if (doctorFeeTotal > 0) {
+        return (
+          <div className="panel" style={{ marginTop: "16px", border: "2px solid #86efac", background: "#f0fdf4", borderRadius: "10px", padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
+              <div>
+                <h3 style={{ margin: 0, color: "#166534", fontSize: "18px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px" }}>
+                  <CheckCircle2 size={20} color="#16a34a" /> Doctor Consultation Fee Collection
+                </h3>
+                <p style={{ margin: "4px 0 0", color: "#15803d", fontSize: "13px" }}>
+                  No medicines added to bill. Only Doctor Consultation Fee will be collected and recorded.
+                </p>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: "12px", color: "#64748b" }}>Patient:</span>
+                <div style={{ fontWeight: 700, fontSize: "15px", color: "#0f172a" }}>
+                  {patientRow?.name || "Patient"} {patientRow?.patient_id ? `(${patientRow.patient_id})` : ""}
+                </div>
+                {activeRxConsultation?.vitals?.token_no && (
+                  <span style={{ fontSize: "12px", color: "#0f766e", fontWeight: 700 }}>
+                    Token #{activeRxConsultation.vitals.token_no}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="checkout sales-checkout" style={{ background: "#fff", border: "1px solid #cbd5e1", borderRadius: "8px", padding: "16px" }}>
+              <label className="field qty-field special-discount-field">
+                <span>Payment mode</span>
+                <select value={paymentMode} onChange={(e) => setPaymentMode(e.currentTarget.value as any)}>
+                  <option value="cash">Cash</option>
+                  <option value="upi">UPI</option>
+                  <option value="card">Card</option>
+                  <option value="bank">Bank</option>
+                </select>
+              </label>
+
+              <div className="totals-mini" style={{ alignItems: "center" }}>
+                <span>Medicines <b>{money(0)}</b></span>
+                <span>Doctor Consultation Fee <b>{money(doctorFeeTotal)}</b></span>
+                <strong
+                  className="billing-grand-total"
+                  style={{
+                    fontSize: "clamp(32px, 4vw, 44px)",
+                    fontWeight: 900,
+                    color: "#dc2626",
+                    textDecoration: "underline",
+                    textDecorationColor: "#dc2626",
+                    textUnderlineOffset: "6px",
+                    textDecorationThickness: "3px",
+                    display: "inline-flex",
+                    alignItems: "baseline",
+                    gap: "8px",
+                  }}
+                >
+                  Grand Total{" "}
+                  <b
+                    style={{
+                      fontSize: "clamp(32px, 4vw, 44px)",
+                      fontWeight: 900,
+                      color: "#dc2626",
+                      textDecoration: "underline",
+                      textDecorationColor: "#dc2626",
+                      textUnderlineOffset: "6px",
+                      textDecorationThickness: "3px",
+                      marginLeft: "6px",
+                    }}
+                  >
+                    {money(doctorFeeTotal)}
+                  </b>
+                </strong>
+              </div>
+
+              <button className="primary" onClick={save} disabled={saving} style={{ minHeight: "44px", fontSize: "15px" }}>
+                {saving ? <LoaderCircle className="spin" /> : <CheckCircle2 size={18} />} Collect Doctor Fee ({money(doctorFeeTotal)}) ({paymentMode.toUpperCase()})
+              </button>
+            </div>
+          </div>
+        );
+      }
+      return (
+        <div className="empty">
+          <h3>No medicines added.</h3>
+          <p>Select a patient/token to load doctor prescription, or add medicines directly from paper prescription.</p>
+        </div>
+      );
+    })()}
   </div>
         </>
       )}
@@ -1477,10 +1694,14 @@ export function InpatientBillingWorkflow({ profile, organization, notify }: { pr
 
   const [ratePreview, setRatePreview] = useState<Row | null>(null);
   const [specialDiscountPercent, setSpecialDiscountPercent] = useState(0);
-  const salesGstMode = organization?.sales_gst_mode || "price_plus_gst";
+  const parsedGst = parseSalesGstMode(organization?.sales_gst_mode);
+  const salesGstMode = parsedGst.mode;
   const isPriceOnly = salesGstMode === "price_only";
   const settingDiscount = Number(organization?.sales_discount_percent || 0);
-  const minDiscountThreshold = Number(organization?.min_discount_medicine_value || 0);
+  const minDiscountThreshold = Number(
+    organization?.min_discount_medicine_value ??
+    getBillingDiscountConfig(profile.organization_id, organization).minDiscountValue
+  );
 
   // Undiscounted gross bill total (using regular MRP rate * quantity for each item)
   const rawBillTotal = cart.reduce((sum, item) => {
@@ -1664,11 +1885,35 @@ export function InpatientBillingWorkflow({ profile, organization, notify }: { pr
       return;
     }
     for (const p of pending) {
-      await supabase.rpc("collect_consultation_fee", {
+      const { error: feeErr } = await supabase.rpc("collect_consultation_fee", {
         p_consultation_id: p.id,
-        p_sale_id: sale.id
+        p_sale_id: sale.id,
       });
+      if (feeErr) {
+        await supabase
+          .from("consultations")
+          .update({
+            doctor_fee_collected: true,
+            doctor_fee_collected_bill_id: sale.id,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", p.id)
+          .eq("organization_id", profile.organization_id);
+      }
     }
+    if (patientId) {
+      await supabase
+        .from("consultations")
+        .update({
+          doctor_fee_collected: true,
+          doctor_fee_collected_bill_id: sale.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("patient_id", patientId)
+        .eq("organization_id", profile.organization_id)
+        .eq("doctor_fee_collected", false);
+    }
+    globalMutate((key) => typeof key === "string" && (key.includes("table:consultations") || key.includes("table:sales")));
     for (const item of finalCart) {
       await supabase.from("sale_items").insert({
         organization_id: profile.organization_id,
@@ -1742,7 +1987,7 @@ export function InpatientBillingWorkflow({ profile, organization, notify }: { pr
   </div><div className="panel billing-panel">
     <div className="billing-patient-line" style={{ marginBottom: "20px", display: "flex", gap: "12px", alignItems: "flex-end", flexWrap: "wrap" }}>
       <div style={{ flex: 1, minWidth: "240px" }}>
-        <AsyncSelect table="patients" select="id,patient_id,name,mobile" searchColumns={["patient_id", "name", "mobile"]} label="Inpatient" value={patientId} displayValue={patientLabel} onChange={(id, row) => { setPatientId(id); setPatientLabel(row ? patientText(row) : ""); }} render={patientText}/>
+        <AsyncSelect table="patients" select="id,patient_id,name,mobile,address" searchColumns={["patient_id", "name", "mobile", "address"]} label="Inpatient" value={patientId} displayValue={patientLabel} onChange={(id, row) => { setPatientId(id); setPatientLabel(row ? patientText(row) : ""); }} render={patientText}/>
       </div>
       <QuickPatientModal profile={profile} notify={notify} onCreated={(row) => { setPatientId(row.id); setPatientLabel(patientText(row)); }} />
     </div>
@@ -1753,7 +1998,7 @@ export function InpatientBillingWorkflow({ profile, organization, notify }: { pr
     </div>}
     
     <div className="billing-entry-line">
-      <AsyncSelect table="products" select="id,product_id,name,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit" searchColumns={["product_id", "name", "barcode", "generic_name"]} label="Medicine" value={productId} onChange={(id, row) => { setProductId(id); setProduct(row || null); setRatePreview(null); }} render={productText}/>
+      <AsyncSelect table="products" select="id,product_id,name,category,generic_name,box_number,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit" searchColumns={["name", "category", "generic_name", "product_id", "barcode", "box_number"]} label="Medicine" value={productId} onChange={(id, row) => { setProductId(id); setProduct(row || null); setRatePreview(null); }} render={productText}/>
       <label className="field qty-field"><span>Quantity</span><input type="number" min="1" step="1" value={qty} onChange={(event) => setQty(Number(event.currentTarget.value))}/></label>
       <button type="button" className="primary" onClick={add}><Plus size={16}/> Add</button>
     </div>

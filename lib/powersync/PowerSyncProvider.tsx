@@ -10,35 +10,50 @@ export const PowerSyncProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     let mounted = true;
+    let isConnecting = false;
+
+    const safeConnect = async () => {
+      if (!mounted || isConnecting || powerSync.connected) return;
+      isConnecting = true;
+      try {
+        await powerSync.connect(connector);
+      } catch (err: any) {
+        // Expected if reconnected or aborted
+      } finally {
+        isConnecting = false;
+      }
+    };
 
     const init = async () => {
-      // Initialize the local database file (safe to do even if logged out)
-      await powerSync.init();
+      try {
+        await powerSync.init();
+      } catch (e) {
+        console.warn("PowerSync init warning:", e);
+      }
       if (!mounted) return;
       
-      // Allow the app to render (this will show the Auth screen if not logged in)
       setInitialized(true);
       
-      // Connect immediately if we already have a session
       const { data: { session } } = await supabase!.auth.getSession();
-      if (session) {
-        powerSync.connect(connector);
+      if (session && mounted) {
+        safeConnect();
       }
     };
 
     init();
 
     const { data: authListener } = supabase?.auth.onAuthStateChange((event, session) => {
-      if (session) {
-        powerSync.connect(connector);
-      } else {
-        powerSync.disconnectAndClear();
+      if (!mounted) return;
+      if (event === "SIGNED_OUT") {
+        powerSync.disconnectAndClear().catch(() => {});
+      } else if (session && !powerSync.connected) {
+        safeConnect();
       }
     }) || { data: { subscription: { unsubscribe: () => {} } } };
 
     return () => {
       mounted = false;
-      authListener.subscription.unsubscribe();
+      authListener?.subscription?.unsubscribe();
     };
   }, []);
 

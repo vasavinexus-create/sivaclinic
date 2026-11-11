@@ -352,7 +352,7 @@ export function StockResetWorkflow({
     if (suppliers.length > 0) return suppliers[0].id;
 
     // Create a default Stock Verification Supplier if organization has no suppliers yet
-    const { data: createdSup, error: supErr } = await supabase!
+    const supRes = await supabase!
       .from("suppliers")
       .insert({
         organization_id: profile.organization_id,
@@ -363,6 +363,8 @@ export function StockResetWorkflow({
       })
       .select("id")
       .single();
+    const createdSup = supRes?.data;
+    const supErr = supRes?.error;
 
     if (supErr || !createdSup) {
       throw new Error(supErr?.message || "Could not resolve supplier for excess stock purchase");

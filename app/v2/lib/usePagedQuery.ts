@@ -27,7 +27,7 @@ async function relatedSearchMatches(moduleKey: string, term: string) {
   const like = `%${term}%`;
   const searchIds = async (table: string, columns: string[]) => {
     const results = await Promise.all(columns.map((column) => client.from(table).select("id").ilike(column, like).limit(100)));
-    return Array.from(new Set(results.flatMap((result) => (result.data || []).map((row: any) => row.id))));
+    return Array.from(new Set(results.flatMap((result) => (result?.data || []).map((row: any) => row.id))));
   };
   const matches = { patientIds: [] as string[], doctorIds: [] as string[], saleIds: [] as string[] };
 
@@ -49,7 +49,7 @@ async function relatedSearchMatches(moduleKey: string, term: string) {
 
     if (productIds.length) {
       const saleItems = await client.from("sale_items").select("sale_id").in("product_id", productIds).limit(500);
-      matches.saleIds = Array.from(new Set((saleItems.data || []).map((row: any) => row.sale_id).filter(Boolean)));
+      matches.saleIds = Array.from(new Set((saleItems?.data || []).map((row: any) => row.sale_id).filter(Boolean)));
     }
   }
 
@@ -89,6 +89,26 @@ export function usePagedQuery({ module, page, pageSize, search, filters, organiz
         if (!thresholds.size) return { rows: [], count: 0 };
         query = query.or([...thresholds].map(([minimum, ids]) => `and(product_id.in.(${ids.join(",")}),current_stock.lte.${minimum})`).join(","));
       }
+      if (module.key === "doctor-fees-pending") {
+        query = query
+          .eq("doctor_fee_collected", false)
+          .is("doctor_fee_collected_bill_id", null)
+          .gt("doctor_fee", 0);
+
+        if (organizationId) {
+          const { data: billedSales } = await supabase
+            .from("sales")
+            .select("consultation_id")
+            .eq("organization_id", organizationId)
+            .neq("status", "cancelled")
+            .not("consultation_id", "is", null);
+
+          const billedIds = Array.from(new Set((billedSales || []).map((s: any) => s.consultation_id).filter(Boolean)));
+          if (billedIds.length > 0) {
+            query = query.not("id", "in", `(${billedIds.join(",")})`);
+          }
+        }
+      }
 
       const trimmed = search.trim();
       if (trimmed) {
@@ -114,7 +134,10 @@ export function usePagedQuery({ module, page, pageSize, search, filters, organiz
         .order(module.orderBy, { ascending: module.ascending ?? false })
         .range(from, to);
 
-      const { data: resultData, count: total, error: queryError } = await query;
+      const queryRes = (await query) || {};
+      const resultData = queryRes.data;
+      const total = queryRes.count;
+      const queryError = queryRes.error;
       if (queryError) throw queryError;
 
       const rawRows = (resultData || []) as Row[];

@@ -3,7 +3,11 @@ import V2App from "../V2App";
 import { v2Nav } from "../lib/modules";
 
 export const dynamicParams = false;
-const aliasPages: Record<string, string> = { "users-roles": "users-and-roles" };
+const aliasPages: Record<string, string> = {
+  "users-roles": "users-and-roles",
+  "patient-delete": "patients",
+  "patients-delete": "patients",
+};
 
 export function generateStaticParams() {
   const pages = v2Nav.filter(item => item.key && item.key !== "dashboard").map(item => item.key!);

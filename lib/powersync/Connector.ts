@@ -3,7 +3,8 @@ import { supabase } from '../supabase';
 
 export class SupabaseConnector implements PowerSyncBackendConnector {
   async fetchCredentials() {
-    const endpoint = process.env.NEXT_PUBLIC_POWERSYNC_URL?.trim();
+    const rawEndpoint = process.env.NEXT_PUBLIC_POWERSYNC_URL?.trim() || "";
+    const endpoint = rawEndpoint.replace(/^["']|["']$/g, "");
     if (!supabase || !endpoint) {
       return null;
     }
