@@ -118,6 +118,16 @@ body{font-size:20px;line-height:1.45}
 .qty-field input{font-size:22px}
 .totals-mini span,.totals-mini strong,.totals-mini b{font-size:18px}
 .totals-mini strong{font-size:28px}
+.totals-mini strong.billing-grand-total,
+.totals-mini strong.billing-grand-total b {
+  font-size: clamp(32px, 4vw, 44px) !important;
+  color: #dc2626 !important;
+  text-decoration: underline !important;
+  text-decoration-color: #dc2626 !important;
+  text-underline-offset: 6px !important;
+  text-decoration-thickness: 3px !important;
+  font-weight: 900 !important;
+}
 .tab-row button{font-size:17px;padding:13px 17px}
 .overlay{display:block;position:fixed;inset:0;background:#0007;z-index:25}
 

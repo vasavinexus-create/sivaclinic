@@ -38,6 +38,7 @@ export type PrescriptionItem = {
   product_id: string;
   product_code?: string;
   name: string;
+  category?: string;
   qty: number;
   morning: boolean;
   afternoon: boolean;
@@ -60,9 +61,10 @@ export function formatTimingText(item: Partial<PrescriptionItem>) {
 function formatPrescriptionSummary(items: PrescriptionItem[], extraNotes: string) {
   const lines = items.map((item, idx) => {
     const timing = formatTimingText(item);
+    const catPart = item.category ? ` [${item.category}]` : "";
     const daysPart = item.days ? ` x ${item.days} days` : "";
     const foodPart = item.food ? ` [${item.food}]` : "";
-    return `${idx + 1}. ${item.name} — Qty: ${item.qty} — ${timing}${foodPart}${daysPart}`;
+    return `${idx + 1}. ${item.name}${catPart} — Qty: ${item.qty} — ${timing}${foodPart}${daysPart}`;
   });
   if (extraNotes.trim()) {
     lines.push(lines.length > 0 ? `\nNotes: ${extraNotes.trim()}` : extraNotes.trim());
@@ -218,6 +220,7 @@ function HistoryList({ patientId, patientLabel, organization, onCountChange }: {
                   <tr style={{ background: "#f1f5f9", borderBottom: "2px solid #cbd5e1" }}>
                     <th style={{ padding: "6px 8px", textAlign: "left", width: "40px", borderRight: "1px solid #cbd5e1" }}>#</th>
                     <th style={{ padding: "6px 8px", textAlign: "left", borderRight: "1px solid #cbd5e1" }}>Medicine Name</th>
+                    <th style={{ padding: "6px 8px", textAlign: "left", borderRight: "1px solid #cbd5e1" }}>Category</th>
                     <th style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>Morning</th>
                     <th style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>Afternoon</th>
                     <th style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>Evening</th>
@@ -232,6 +235,7 @@ function HistoryList({ patientId, patientLabel, organization, onCountChange }: {
                     <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
                       <td style={{ padding: "6px 8px", borderRight: "1px solid #cbd5e1" }}>{idx + 1}</td>
                       <td style={{ padding: "6px 8px", borderRight: "1px solid #cbd5e1" }}><strong>{item.name}</strong></td>
+                      <td style={{ padding: "6px 8px", borderRight: "1px solid #cbd5e1" }}>{item.category || "-"}</td>
                       <td style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>{item.morning ? "✓" : "-"}</td>
                       <td style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>{item.afternoon ? "✓" : "-"}</td>
                       <td style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>{item.evening ? "✓" : "-"}</td>
@@ -315,6 +319,7 @@ function HistoryList({ patientId, patientLabel, organization, onCountChange }: {
                             <thead>
                               <tr>
                                 <th>Medicine</th>
+                                <th>Category</th>
                                 <th>Morning</th>
                                 <th>Afternoon</th>
                                 <th>Evening</th>
@@ -327,6 +332,13 @@ function HistoryList({ patientId, patientLabel, organization, onCountChange }: {
                               {rxItems.map((item, idx) => (
                                 <tr key={`${item.product_id}-${idx}`}>
                                   <td><strong>{item.name}</strong></td>
+                                  <td>
+                                    {item.category ? (
+                                      <span style={{ fontSize: "11px", padding: "2px 8px", background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0", borderRadius: "12px", fontWeight: 600 }}>
+                                        {item.category}
+                                      </span>
+                                    ) : "-"}
+                                  </td>
                                   <td>{item.morning ? "✓" : "-"}</td>
                                   <td>{item.afternoon ? "✓" : "-"}</td>
                                   <td>{item.evening ? "✓" : "-"}</td>
@@ -1155,6 +1167,7 @@ export function ConsultationWorkflow({
         product_id: rxProductId,
         product_code: rxProductRow.product_id || "",
         name: rxProductRow.name || "",
+        category: rxProductRow.category || "",
         qty: Number(rxQty),
         morning: rxMorning,
         afternoon: rxAfternoon,
@@ -1214,6 +1227,7 @@ export function ConsultationWorkflow({
       product_id: rxProductId,
       product_code: rxProductRow.product_id || "",
       name: rxProductRow.name || "",
+      category: rxProductRow.category || "",
       qty: qtyNum,
       morning: rxMorning,
       afternoon: rxAfternoon,
@@ -1282,6 +1296,7 @@ export function ConsultationWorkflow({
           product_id: rxProductId,
           product_code: rxProductRow.product_id || "",
           name: rxProductRow.name || "",
+          category: rxProductRow.category || "",
           qty: Number(rxQty),
           morning: rxMorning,
           afternoon: rxAfternoon,
@@ -1523,6 +1538,7 @@ export function ConsultationWorkflow({
                   <tr style={{ background: "#f1f5f9", borderBottom: "2px solid #cbd5e1" }}>
                     <th style={{ padding: "6px 8px", textAlign: "left", width: "40px", borderRight: "1px solid #cbd5e1" }}>#</th>
                     <th style={{ padding: "6px 8px", textAlign: "left", borderRight: "1px solid #cbd5e1" }}>Medicine Name</th>
+                    <th style={{ padding: "6px 8px", textAlign: "left", borderRight: "1px solid #cbd5e1" }}>Category</th>
                     <th style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>Morning</th>
                     <th style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>Afternoon</th>
                     <th style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>Evening</th>
@@ -1537,6 +1553,7 @@ export function ConsultationWorkflow({
                     <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
                       <td style={{ padding: "6px 8px", borderRight: "1px solid #cbd5e1" }}>{idx + 1}</td>
                       <td style={{ padding: "6px 8px", borderRight: "1px solid #cbd5e1" }}><strong>{item.name}</strong></td>
+                      <td style={{ padding: "6px 8px", borderRight: "1px solid #cbd5e1" }}>{item.category || "-"}</td>
                       <td style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>{item.morning ? "✓" : "-"}</td>
                       <td style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>{item.afternoon ? "✓" : "-"}</td>
                       <td style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #cbd5e1" }}>{item.evening ? "✓" : "-"}</td>
@@ -2028,6 +2045,11 @@ export function ConsultationWorkflow({
                           <tr key={`${item.product_id}-${idx}`}>
                             <td className="rx-cell-full rx-cell-med" style={{ whiteSpace: "normal", wordBreak: "break-word", overflowWrap: "anywhere", minWidth: "200px" }}>
                               <strong>{item.name}</strong>
+                              {item.category && (
+                                <span style={{ marginLeft: "8px", fontSize: "11px", padding: "2px 8px", background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0", borderRadius: "12px", fontWeight: 600 }}>
+                                  {item.category}
+                                </span>
+                              )}
                             </td>
                             <td className="rx-cell-full rx-cell-timing">
                               <div className="rx-table-timing-row">

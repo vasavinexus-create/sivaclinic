@@ -178,6 +178,7 @@ export function PrintablePrescription({
   // If cart items exist, combine quantities per product and attach doctor dosage/timing from rxItems or cart item
   const medicineRows: Array<{
     name: string;
+    category: string;
     schedule: string;
     food: string;
     days: string;
@@ -185,16 +186,20 @@ export function PrintablePrescription({
   }> = [];
 
   if (Array.isArray(cart) && cart.length > 0) {
-    const grouped = new Map<string, { name: string; qty: number; dosage_schedule?: string; product_id?: string }>();
+    const grouped = new Map<string, { name: string; category?: string; qty: number; dosage_schedule?: string; product_id?: string }>();
     for (const item of cart) {
       const key = String(item.product_id || item.name || "");
       const existing = grouped.get(key);
       if (existing) {
         existing.qty += Number(item.qty || 0);
         if (!existing.dosage_schedule && item.dosage_schedule) existing.dosage_schedule = item.dosage_schedule;
+        if (!existing.category && (item.category || (item as any).product?.category)) {
+          existing.category = item.category || (item as any).product?.category;
+        }
       } else {
         grouped.set(key, {
           name: item.name || "-",
+          category: item.category || (item as any).product?.category || "",
           qty: Number(item.qty || 0),
           dosage_schedule: item.dosage_schedule || "",
           product_id: item.product_id,
@@ -205,6 +210,7 @@ export function PrintablePrescription({
       const matchedRx = rxItems.find(
         (r) => (g.product_id && r.product_id === g.product_id) || String(r.name || "").toLowerCase() === String(g.name || "").toLowerCase()
       );
+      const cat = matchedRx?.category || g.category || "";
       if (matchedRx) {
         const timingLabels: string[] = [];
         if (matchedRx.morning) timingLabels.push("Morning");
@@ -214,6 +220,7 @@ export function PrintablePrescription({
         const code = `${matchedRx.morning ? 1 : 0}-${matchedRx.afternoon ? 1 : 0}-${matchedRx.evening ? 1 : 0}-${matchedRx.night ? 1 : 0}`;
         medicineRows.push({
           name: g.name,
+          category: cat,
           schedule: `${code}${timingLabels.length ? ` (${timingLabels.join(", ")})` : ""}`,
           food: matchedRx.food || "-",
           days: matchedRx.days ? `${matchedRx.days} day(s)` : "-",
@@ -222,6 +229,7 @@ export function PrintablePrescription({
       } else {
         medicineRows.push({
           name: g.name,
+          category: cat,
           schedule: g.dosage_schedule || "-",
           food: "-",
           days: "-",
@@ -239,6 +247,7 @@ export function PrintablePrescription({
       const code = `${r.morning ? 1 : 0}-${r.afternoon ? 1 : 0}-${r.evening ? 1 : 0}-${r.night ? 1 : 0}`;
       medicineRows.push({
         name: r.name || "-",
+        category: r.category || "",
         schedule: `${code}${timingLabels.length ? ` (${timingLabels.join(", ")})` : ""}`,
         food: r.food || "-",
         days: r.days ? `${r.days} day(s)` : "-",
@@ -314,6 +323,7 @@ export function PrintablePrescription({
           <tr>
             <th style={{ width: "45px" }}>S.No</th>
             <th>Medicine Name</th>
+            <th>Category</th>
             <th>Dosage / Timing (M-A-E-N)</th>
             <th>Instruction</th>
             <th>Duration</th>
@@ -326,6 +336,7 @@ export function PrintablePrescription({
               <tr key={idx}>
                 <td>{idx + 1}</td>
                 <td><strong>{row.name}</strong></td>
+                <td>{row.category || "-"}</td>
                 <td>{row.schedule}</td>
                 <td>{row.food}</td>
                 <td>{row.days}</td>
@@ -334,7 +345,7 @@ export function PrintablePrescription({
             ))
           ) : (
             <tr>
-              <td colSpan={6} style={{ textAlign: consultation?.prescription_notes ? "left" : "center", padding: "12px" }}>
+              <td colSpan={7} style={{ textAlign: consultation?.prescription_notes ? "left" : "center", padding: "12px" }}>
                 {consultation?.prescription_notes ? (
                   <div style={{ whiteSpace: "pre-wrap", fontSize: "13px" }}>{consultation.prescription_notes}</div>
                 ) : (
@@ -389,6 +400,7 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
   const [activeRxConsultation, setActiveRxConsultation] = useState<Row | null>(null);
   const [loadingRx, setLoadingRx] = useState(false);
   const [refreshingRx, setRefreshingRx] = useState(false);
+  const [productCategoryMap, setProductCategoryMap] = useState<Record<string, string>>({});
 
   const salesGstMode = organization?.sales_gst_mode || "price_plus_gst";
   const isPriceOnly = salesGstMode === "price_only";
@@ -458,7 +470,7 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
       const productIds = rxItems.map((x) => x.product_id).filter(Boolean);
       const { data: prodRows } = await supabase
         .from("products")
-        .select("id,product_id,name,barcode,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit")
+        .select("id,product_id,name,category,barcode,gst_percent,mrp,selling_rate,purchase_rate,default_units_per_purchase_unit")
         .in("id", productIds);
       const prodMap = new Map<string, Row>((prodRows || []).map((p: Row) => [p.id, p]));
 
@@ -485,6 +497,7 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
           const scheduleStr = `${rx.morning ? 1 : 0}-${rx.afternoon ? 1 : 0}-${rx.evening ? 1 : 0}-${rx.night ? 1 : 0}${timingParts.length ? ` (${timingParts.join(", ")})` : ""}${rx.food ? ` · ${rx.food}` : ""}`;
           const annotated = res.allocations.map((alloc: Row) => ({
             ...alloc,
+            category: prod.category || rx.category || "",
             dosage_schedule: scheduleStr,
             prescribed_qty: reqQty,
           }));
@@ -532,6 +545,30 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
         }
       });
   }, [patientId]);
+
+  useEffect(() => {
+    if (!supabase || !activeRxConsultation) return;
+    const items = activeRxConsultation.vitals?.prescription_items;
+    if (!Array.isArray(items) || items.length === 0) return;
+    const needFetchIds = items
+      .filter((x: any) => !x.category && x.product_id)
+      .map((x: any) => x.product_id);
+    if (!needFetchIds.length) return;
+    supabase
+      .from("products")
+      .select("id,category")
+      .in("id", needFetchIds)
+      .then(({ data }) => {
+        if (!data) return;
+        setProductCategoryMap((prev) => {
+          const next = { ...prev };
+          for (const p of data) {
+            if (p.id && p.category) next[p.id] = p.category;
+          }
+          return next;
+        });
+      });
+  }, [activeRxConsultation]);
 
   const lookupBillingToken = async (rawToken: string) => {
     const clean = rawToken.trim().replace(/^#|^T-/i, "");
@@ -975,7 +1012,7 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
           <>
         <div className="page-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '10px' }}>
           <div>
-            <h1>Billing {cart.length > 0 && <span className="billing-head-total">{money(total)}</span>}</h1>
+            <h1>Billing {cart.length > 0 && <span className="billing-head-total">{money(total + pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0))}</span>}</h1>
             <p>Load Doctor Prescription automatically or bill directly from paper prescription.</p>
           </div>
           <div className="print-hide" style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1142,6 +1179,7 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
               <thead>
                 <tr>
                   <th>Prescribed Medicine</th>
+                  <th>Category</th>
                   <th>Morning</th>
                   <th>Afternoon</th>
                   <th>Evening</th>
@@ -1152,18 +1190,30 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
                 </tr>
               </thead>
               <tbody>
-                {activeRxConsultation.vitals.prescription_items.map((item: any, idx: number) => (
-                  <tr key={`${item.product_id}-${idx}`}>
-                    <td><strong>{item.name}</strong></td>
-                    <td>{item.morning ? "✓" : "-"}</td>
-                    <td>{item.afternoon ? "✓" : "-"}</td>
-                    <td>{item.evening ? "✓" : "-"}</td>
-                    <td>{item.night ? "✓" : "-"}</td>
-                    <td>{item.food || "-"}</td>
-                    <td>{item.days || "-"}</td>
-                    <td><strong>{item.qty}</strong></td>
-                  </tr>
-                ))}
+                {activeRxConsultation.vitals.prescription_items.map((item: any, idx: number) => {
+                  const cat = item.category || productCategoryMap[item.product_id] || "";
+                  return (
+                    <tr key={`${item.product_id}-${idx}`}>
+                      <td><strong>{item.name}</strong></td>
+                      <td>
+                        {cat ? (
+                          <span style={{ fontSize: "11px", padding: "2px 8px", background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0", borderRadius: "12px", fontWeight: 600 }}>
+                            {cat}
+                          </span>
+                        ) : (
+                          <span style={{ color: "#94a3b8" }}>-</span>
+                        )}
+                      </td>
+                      <td>{item.morning ? "✓" : "-"}</td>
+                      <td>{item.afternoon ? "✓" : "-"}</td>
+                      <td>{item.evening ? "✓" : "-"}</td>
+                      <td>{item.night ? "✓" : "-"}</td>
+                      <td>{item.food || "-"}</td>
+                      <td>{item.days || "-"}</td>
+                      <td><strong>{item.qty}</strong></td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1342,13 +1392,43 @@ export function BillingWorkflow({ profile, organization, notify }: { profile: Pr
             const doctorFeeTotal = pending.reduce((sum, row) => sum + Number(row.doctor_fee || 0), 0);
             const grandTotal = total + doctorFeeTotal;
             return (
-              <div className="totals-mini">
+              <div className="totals-mini" style={{ alignItems: "center" }}>
                 <span>Total <b>{money(total)}</b></span>
                 {Number(specialDiscountPercent || 0) > 0 && (
                   <span>Special discount <b>-{money(specialDiscountAmount)}</b></span>
                 )}
                 <span>Doctor Fees <b>{money(doctorFeeTotal)}</b></span>
-                <strong>Grand Total <b>{money(grandTotal)}</b></strong>
+                <strong
+                  className="billing-grand-total"
+                  style={{
+                    fontSize: "clamp(32px, 4vw, 44px)",
+                    fontWeight: 900,
+                    color: "#dc2626",
+                    textDecoration: "underline",
+                    textDecorationColor: "#dc2626",
+                    textUnderlineOffset: "6px",
+                    textDecorationThickness: "3px",
+                    display: "inline-flex",
+                    alignItems: "baseline",
+                    gap: "8px",
+                  }}
+                >
+                  Grand Total{" "}
+                  <b
+                    style={{
+                      fontSize: "clamp(32px, 4vw, 44px)",
+                      fontWeight: 900,
+                      color: "#dc2626",
+                      textDecoration: "underline",
+                      textDecorationColor: "#dc2626",
+                      textUnderlineOffset: "6px",
+                      textDecorationThickness: "3px",
+                      marginLeft: "6px",
+                    }}
+                  >
+                    {money(grandTotal)}
+                  </b>
+                </strong>
               </div>
             );
           })()}
@@ -1771,10 +1851,40 @@ export function InpatientBillingWorkflow({ profile, organization, notify }: { pr
             <label>Special Discount %</label>
             <input type="number" min="0" max="100" step="0.01" value={specialDiscountPercent} onChange={(e) => setSpecialDiscountPercent(Number(e.currentTarget.value))} />
           </div>
-          <div className="totals-mini">
+          <div className="totals-mini" style={{ alignItems: "center" }}>
             <span>Total <b>{money(total)}</b></span>
             {specialDiscountAmount > 0 && <span>Special disc. <b>-{money(specialDiscountAmount)}</b></span>}
-            <strong>Bill total <b>{money(total)}</b></strong>
+            <strong
+              className="billing-grand-total"
+              style={{
+                fontSize: "clamp(32px, 4vw, 44px)",
+                fontWeight: 900,
+                color: "#dc2626",
+                textDecoration: "underline",
+                textDecorationColor: "#dc2626",
+                textUnderlineOffset: "6px",
+                textDecorationThickness: "3px",
+                display: "inline-flex",
+                alignItems: "baseline",
+                gap: "8px",
+              }}
+            >
+              Bill total{" "}
+              <b
+                style={{
+                  fontSize: "clamp(32px, 4vw, 44px)",
+                  fontWeight: 900,
+                  color: "#dc2626",
+                  textDecoration: "underline",
+                  textDecorationColor: "#dc2626",
+                  textUnderlineOffset: "6px",
+                  textDecorationThickness: "3px",
+                  marginLeft: "6px",
+                }}
+              >
+                {money(total)}
+              </b>
+            </strong>
           </div>
           <button className="primary" onClick={save} disabled={saving}>{saving ? <LoaderCircle className="spin"/> : <CheckCircle2 size={16}/>} Credit to patient</button>
         </div>
